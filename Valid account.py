@@ -73,9 +73,9 @@ submit_button.click()
 time.sleep(5)
 
 # Doğum günü bilgilerini gir
-birth_month = driver.find_element(By.XPATH, '//select[@title="Month:"]')
-birth_day = driver.find_element(By.XPATH, '//select[@title="Day:"]')
-birth_year = driver.find_element(By.XPATH, '//select[@title="Year:"]')
+birth_month = driver.find_element(By.XPATH, '//select[@name="month"]')
+birth_day = driver.find_element(By.XPATH, '//select[@name="day"]')
+birth_year = driver.find_element(By.XPATH, '//select[@name="year"]')
 
 # Kullanıcının yaşını 18'den büyük olacak şekilde ayarla
 birth_month.send_keys('January')
