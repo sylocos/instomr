@@ -10,6 +10,8 @@ import time
 import random
 import string
 from datetime import datetime
+import re
+import json
 
 class InstagramBot:
     def __init__(self):
@@ -30,6 +32,11 @@ class InstagramBot:
         
         # Current year from system time
         self.current_year = datetime.now().year
+        
+        # Temp Mail API endpoint (örnek olarak temp-mail.org API'si)
+        self.temp_mail_api = "https://api.internal.temp-mail.io/api/v2"
+        self.email_address = None
+        self.email_domain = "@temporary-mail.net"  # Kullandığınız servise göre değiştirin
 
     def generate_random_string(self, length=10):
         """Generate a random string for email address"""
@@ -40,12 +47,84 @@ class InstagramBot:
         """Get a temporary email address"""
         try:
             email_username = self.generate_random_string(12)
-            email = f"{email_username}@temporary-mail.net"
-            print(f"Oluşturulan email: {email}")
-            return email
+            self.email_address = f"{email_username}{self.email_domain}"
+            print(f"Oluşturulan email: {self.email_address}")
+            return self.email_address
         except Exception as e:
             print(f"Email oluşturma hatası: {e}")
             return None
+
+    def get_verification_code(self, max_attempts=30, delay=10):
+        """Get verification code from temporary email"""
+        print("Doğrulama kodu bekleniyor...")
+        
+        for attempt in range(max_attempts):
+            try:
+                # Email API'den mesajları al
+                response = requests.get(
+                    f"{self.temp_mail_api}/messages",
+                    params={"email": self.email_address}
+                )
+                
+                if response.status_code == 200:
+                    messages = response.json()
+                    
+                    for message in messages:
+                        # Instagram'dan gelen maili bul
+                        if "instagram" in message['from'].lower():
+                            # Mailin içeriğinden doğrulama kodunu çıkar
+                            body = message['body']
+                            # Doğrulama kodu genelde 6 haneli bir sayıdır
+                            verification_code = re.search(r'\b\d{6}\b', body)
+                            
+                            if verification_code:
+                                code = verification_code.group(0)
+                                print(f"Doğrulama kodu bulundu: {code}")
+                                return code
+            
+            except Exception as e:
+                print(f"Doğrulama kodu alınırken hata: {e}")
+            
+            print(f"Doğrulama kodu bekleniyor... Deneme {attempt + 1}/{max_attempts}")
+            time.sleep(delay)
+        
+        print("Doğrulama kodu bulunamadı!")
+        return None
+
+    def enter_verification_code(self, code):
+        """Enter verification code to Instagram"""
+        try:
+            # Doğrulama kodu giriş alanını bul
+            verification_input = self.wait_for_element(
+                By.XPATH, 
+                "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']"
+            )
+            
+            if not verification_input:
+                print("Doğrulama kodu giriş alanı bulunamadı!")
+                return False
+            
+            # Kodu gir
+            self.safe_send_keys(verification_input, code)
+            
+            # Doğrula butonunu bul ve tıkla
+            confirm_button = self.wait_for_element(
+                By.XPATH, 
+                "//button[contains(text(), 'Onayla') or contains(text(), 'Confirm')]",
+                condition="clickable"
+            )
+            
+            if confirm_button:
+                confirm_button.click()
+                print("Doğrulama kodu girildi ve onaylandı")
+                time.sleep(random.uniform(2, 4))
+                return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"Doğrulama kodu girilirken hata: {e}")
+            return False
 
     def wait_for_element(self, by, value, timeout=20, condition="present"):
         """Wait for element with better error handling"""
@@ -76,7 +155,6 @@ class InstagramBot:
     def handle_age_verification(self):
         """Handle age verification with Turkish support"""
         try:
-            # First check if age verification is present
             month_select = self.wait_for_element(By.XPATH, "//select[@title='Ay:']", timeout=5)
             if not month_select:
                 print("Yaş doğrulama formu bulunamadı, devam ediliyor...")
@@ -84,20 +162,10 @@ class InstagramBot:
 
             print("Yaş doğrulama işlemi yapılıyor...")
             
-            # Turkish month names
             turkish_months = {
-                1: "Ocak",
-                2: "Şubat",
-                3: "Mart",
-                4: "Nisan",
-                5: "Mayıs",
-                6: "Haziran",
-                7: "Temmuz",
-                8: "Ağustos",
-                9: "Eylül",
-                10: "Ekim",
-                11: "Kasım",
-                12: "Aralık"
+                1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan",
+                5: "Mayıs", 6: "Haziran", 7: "Temmuz", 8: "Ağustos",
+                9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
             }
             
             try:
@@ -201,6 +269,16 @@ class InstagramBot:
             if not self.handle_age_verification():
                 print("Yaş doğrulama başarısız olabilir, devam ediliyor...")
 
+            # Wait for and handle email verification
+            verification_code = self.get_verification_code()
+            if verification_code:
+                if self.enter_verification_code(verification_code):
+                    print("Email doğrulama başarılı!")
+                else:
+                    print("Email doğrulama başarısız!")
+            else:
+                print("Doğrulama kodu alınamadı!")
+
             # Save account details
             self.save_account_details(email, username, password)
 
@@ -228,9 +306,8 @@ class InstagramBot:
     def print_next_steps(self):
         """Print instructions for next steps"""
         print("\nÖNEMLİ: Sonraki adımlar:")
-        print("1. Email doğrulama kodunu kontrol edin")
-        print("2. CAPTCHA görünürse tamamlayın")
-        print("3. Telefon doğrulaması istenirse tamamlayın")
+        print("1. CAPTCHA görünürse tamamlayın")
+        print("2. Telefon doğrulaması istenirse tamamlayın")
         print("\nNot: Tarayıcı penceresi manuel doğrulama için açık kalacak")
 
 if __name__ == "__main__":
