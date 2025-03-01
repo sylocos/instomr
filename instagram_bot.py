@@ -362,7 +362,7 @@ class InstagramBot:
 if __name__ == "__main__":
     # Gmail bilgilerinizi girin
     GMAIL_ADDRESS = "siyahmakalem@gmail.com"  # Gmail adresinizi girin
-    GMAIL_APP_PASSWORD = "edirnekesan1996" # Gmail uygulama şifrenizi girin
+    GMAIL_APP_PASSWORD = "knig sptg hcgh axfw" # Gmail uygulama şifrenizi girin
     
     print("Instagram Bot başlatılıyor...")
     print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerekebilir.")
