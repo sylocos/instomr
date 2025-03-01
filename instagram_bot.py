@@ -114,7 +114,7 @@ class InstagramBot:
         self.base_email = gmail_address
         self.gmail_password = gmail_app_password
         self.current_email = None
-        self.fake = Faker()
+        self.fake = Faker('tr_TR')
         
         # Chrome ayarları
         chrome_options = uc.ChromeOptions()
@@ -260,6 +260,70 @@ class InstagramBot:
             print(f"Yaş doğrulama hatası: {e}")
             return False
 
+    def enter_verification_code(self, code):
+        """Doğrulama kodunu gir"""
+        try:
+            # Farklı kod giriş alanı seçicilerini dene
+            selectors = [
+                "//input[@name='email_confirmation_code']",
+                "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']",
+                "//input[@name='confirmationCode']",
+                "//input[@placeholder='Güvenlik Kodu' or @placeholder='Security Code']",
+                "//input[@type='text' and @inputmode='numeric']",
+                "//input[contains(@class, 'confirmation')]",
+                "//input[@autocomplete='one-time-code']"
+            ]
+            
+            code_input = None
+            for selector in selectors:
+                try:
+                    code_input = self.wait_for_element(By.XPATH, selector, timeout=5)
+                    if code_input:
+                        print(f"Kod giriş alanı bulundu")
+                        break
+                except:
+                    continue
+
+            if code_input:
+                # Kodu yavaşça gir
+                for digit in code:
+                    code_input.send_keys(digit)
+                    time.sleep(random.uniform(0.1, 0.3))
+                
+                time.sleep(1)
+                
+                # Onayla butonlarını dene
+                confirm_buttons = [
+                    "//button[text()='Onayla']",
+                    "//button[text()='Confirm']",
+                    "//button[@type='submit']"
+                ]
+                
+                for button_xpath in confirm_buttons:
+                    try:
+                        confirm_button = self.wait_for_element(
+                            By.XPATH,
+                            button_xpath,
+                            timeout=5,
+                            condition="clickable"
+                        )
+                        if confirm_button:
+                            confirm_button.click()
+                            print("Doğrulama kodu gönderildi")
+                            return True
+                    except:
+                        continue
+                
+                print("Onay butonu bulunamadı")
+                return False
+            else:
+                print("Kod giriş alanı bulunamadı")
+                return False
+                
+        except Exception as e:
+            print(f"Kod girişi hatası: {e}")
+            return False
+
     def create_account(self):
         """Instagram hesabı oluştur"""
         try:
@@ -312,28 +376,71 @@ class InstagramBot:
             # Doğrulama kodunu bekle ve gir
             verification_code = self.get_verification_code()
             if verification_code:
-                # Doğrulama kod alanını bul
-                code_input = self.wait_for_element(
-                    By.XPATH, 
-                    "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']"
-                )
+                # Doğrulama kod alanını bulmak için farklı seçiciler deneyelim
+                selectors = [
+                    "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']",
+                    "//input[@name='email_confirmation_code']",
+                    "//input[@id='email_confirmation_code']",
+                    "//input[@placeholder='Güvenlik Kodu' or @placeholder='Security Code']",
+                    "//input[@type='text' and @inputmode='numeric']",
+                    "//input[contains(@class, 'confirmation')]",
+                    "//input[@autocomplete='one-time-code']"
+                ]
+                
+                code_input = None
+                for selector in selectors:
+                    try:
+                        code_input = self.wait_for_element(By.XPATH, selector, timeout=5)
+                        if code_input:
+                            print(f"Kod giriş alanı bulundu: {selector}")
+                            break
+                    except:
+                        continue
+
                 if code_input:
-                    code_input.send_keys(verification_code)
-                    time.sleep(random.uniform(1, 2))
-                    
-                    # Onayla butonunu bul ve tıkla
-                    confirm_button = self.wait_for_element(
-                        By.XPATH, 
-                        "//button[contains(text(), 'Onayla') or contains(text(), 'Confirm')]",
-                        condition="clickable"
-                    )
-                    if confirm_button:
-                        confirm_button.click()
-                        print("Doğrulama kodu girildi")
-                    else:
-                        print("Onayla butonu bulunamadı")
+                    # Kodu yavaşça gir
+                    for digit in verification_code:
+                        code_input.send_keys(digit)
+                        time.sleep(random.uniform(0.1, 0.3))
+                    time.sleep(1)
+
+                    # Tüm olası onay buton seçicilerini dene
+                    confirm_buttons = [
+                        "//button[contains(text(), 'Onayla')]",
+                        "//button[contains(text(), 'Confirm')]",
+                        "//button[@type='submit']",
+                        "//div[contains(@role, 'button')]//*[contains(text(), 'Onayla')]",
+                        "//div[contains(@role, 'button')]//*[contains(text(), 'Confirm')]",
+                        "//button[contains(@class, 'submit')]"
+                    ]
+
+                    for button_xpath in confirm_buttons:
+                        try:
+                            confirm_button = self.wait_for_element(
+                                By.XPATH,
+                                button_xpath,
+                                timeout=5,
+                                condition="clickable"
+                            )
+                            if confirm_button:
+                                confirm_button.click()
+                                print("Doğrulama kodu gönderildi")
+                                time.sleep(2)
+                                break
+                        except:
+                            continue
+
+                    if not confirm_button:
+                        print("Onay butonu bulunamadı")
                 else:
                     print("Doğrulama kodu giriş alanı bulunamadı")
+                    # Sayfa kaynağını kaydet
+                    try:
+                        with open("page_source.html", "w", encoding="utf-8") as f:
+                            f.write(self.driver.page_source)
+                        print("Sayfa kaynağı 'page_source.html' dosyasına kaydedildi")
+                    except:
+                        pass
             else:
                 print("Doğrulama kodu alınamadı")
 
@@ -362,7 +469,7 @@ class InstagramBot:
 if __name__ == "__main__":
     # Gmail bilgilerinizi girin
     GMAIL_ADDRESS = "siyahmakalem@gmail.com"  # Gmail adresinizi girin
-    GMAIL_APP_PASSWORD = "knig sptg hcgh axfw" # Gmail uygulama şifrenizi girin
+    GMAIL_APP_PASSWORD = "knig sptg hcgh axfw"  # Gmail uygulama şifrenizi girin
     
     print("Instagram Bot başlatılıyor...")
     print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerekebilir.")
