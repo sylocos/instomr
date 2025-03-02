@@ -76,7 +76,7 @@ class ProxyManager:
             try:
                 print(f"Proxy kaynağı kontrol ediliyor: {source}")
                 response = requests.get(source, timeout=10)
-                if response.status_code == 200:
+                if response.status_code == 200):
                     if source.endswith('.txt'):
                         proxies = response.text.strip().split('\n')
                     else:
@@ -125,13 +125,41 @@ class GmailBot:
 
         self.driver.find_element(By.ID, 'firstName').send_keys(first_name)
         self.driver.find_element(By.ID, 'lastName').send_keys(last_name)
-        self.driver.find_element(By.ID, 'username').send_keys(username)
+        
+        # Bekleyerek username alanının yüklenmesini sağla
+        username_field = self.wait_for_element(By.ID, 'username')
+        if username_field:
+            username_field.send_keys(username)
+        else:
+            print("Kullanıcı adı alanı bulunamadı.")
+            self.save_page_source("gmail_signup_error.html")
+            return None, None
+        
         self.driver.find_element(By.NAME, 'Passwd').send_keys(password)
         self.driver.find_element(By.NAME, 'ConfirmPasswd').send_keys(password)
         self.driver.find_element(By.XPATH, '//*[@id="accountDetailsNext"]').click()
 
         time.sleep(2)
         return username, password
+
+    def wait_for_element(self, by, value, timeout=20, condition="present"):
+        try:
+            if condition == "clickable":
+                return self.wait.until(EC.element_to_be_clickable((by, value)))
+            else:
+                return self.wait.until(EC.presence_of_element_located((by, value)))
+        except TimeoutException:
+            print(f"Element bulunamadı: {value}")
+            return None
+
+    def save_page_source(self, filename):
+        """Hata durumunda sayfa kaynağını kaydet"""
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+            print(f"Sayfa kaynağı '{filename}' dosyasına kaydedildi")
+        except Exception as e:
+            print(f"Sayfa kaynağı kaydetme hatası: {e}")
 
     def solve_captcha(self):
         # Implement CAPTCHA solving using an external service like 2Captcha or AntiCaptcha
@@ -462,25 +490,4 @@ class InstagramBot:
                 f.write(f"Şifre: {password}\n")
                 f.write("-" * 50 + "\n")
             print("\nHesap bilgileri 'hesap_kayitlari.txt' dosyasına kaydedildi")
-        except Exception as e:
-            print(f"Bilgi kaydetme hatası: {e}")
-
-if __name__ == "__main__":
-    proxy_manager = ProxyManager()
-    working_proxy = proxy_manager.get_working_proxy()
-    if working_proxy:
-        print(f"Working proxy: {working_proxy}")
-    else:
-        print("No working proxy found")
-
-    gmail_bot = GmailBot()
-    gmail_username, gmail_password = gmail_bot.create_gmail_account()
-    gmail_bot.save_account_to_csv(gmail_username, gmail_password)
-
-    instagram_bot = InstagramBot(gmail_username, gmail_password)
-    success = instagram_bot.create_account()
-    
-    if not success:
-        print("Hesap oluşturulamadı")
-    
-    input("\nÇıkmak için Enter'a basın...")
+       
