@@ -14,6 +14,7 @@ import os
 import imaplib
 import email
 import re
+import csv
 from datetime import datetime
 import string
 
@@ -21,7 +22,7 @@ class ProxyManager:
     def __init__(self):
         self.proxies = []
         self.current_proxy = None
-        self.working_proxies = []  # Çalışan proxyleri sakla
+        self.working_proxies = []
         self.working_proxies_file = 'working_proxies.txt'
         self.proxy_sources = [
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
@@ -32,7 +33,6 @@ class ProxyManager:
         self.load_working_proxies()
 
     def load_working_proxies(self):
-        """Daha önce çalışan proxyleri yükle"""
         try:
             if os.path.exists(self.working_proxies_file):
                 with open(self.working_proxies_file, 'r') as f:
@@ -42,7 +42,6 @@ class ProxyManager:
             self.working_proxies = []
 
     def save_working_proxy(self, proxy):
-        """Çalışan proxy'i kaydet"""
         if proxy and proxy not in self.working_proxies:
             self.working_proxies.append(proxy)
             try:
@@ -52,7 +51,6 @@ class ProxyManager:
                 pass
 
     def test_proxy(self, proxy, quick=True):
-        """Proxy test et"""
         try:
             timeout = 5 if quick else 10
             response = requests.get(
@@ -65,18 +63,15 @@ class ProxyManager:
             return False
 
     def get_working_proxy(self):
-        """Çalışan proxy bul - önce kayıtlı proxylerden dene"""
-        # Önce kayıtlı proxyleri dene
         if self.working_proxies:
             random.shuffle(self.working_proxies)
-            for proxy in self.working_proxies[:3]:  # İlk 3 kayıtlı proxy'i dene
+            for proxy in self.working_proxies[:3]:
                 print(f"Kayıtlı proxy test ediliyor: {proxy}")
                 if self.test_proxy(proxy, quick=True):
                     self.current_proxy = proxy
                     print(f"✓ Çalışan proxy bulundu: {proxy}")
                     return proxy
 
-        # Yeni proxy listesi yükle
         for source in self.proxy_sources:
             try:
                 print(f"Proxy kaynağı kontrol ediliyor: {source}")
@@ -84,11 +79,10 @@ class ProxyManager:
                 if response.status_code == 200:
                     if source.endswith('.txt'):
                         proxies = response.text.strip().split('\n')
-                    else:  # JSON API
+                    else:
                         data = response.json()
                         proxies = [f"{p['ip']}:{p['port']}" for p in data.get('data', [])]
                     
-                    # Her proxy'i test et
                     for proxy in proxies:
                         proxy = proxy.strip()
                         if proxy:
@@ -105,18 +99,59 @@ class ProxyManager:
 
         return None
 
+class GmailBot:
+    def __init__(self):
+        self.fake = Faker()
+        chrome_options = uc.ChromeOptions()
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_argument('--disable-notifications')
+        chrome_options.add_argument('--ignore-certificate-errors')
+        chrome_options.add_argument('--ignore-ssl-errors')
+        chrome_options.add_argument('--disable-infobars')
+        chrome_options.add_argument('--lang=en-US')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        self.driver = uc.Chrome(options=chrome_options)
+        self.wait = WebDriverWait(self.driver, 20)
+
+    def create_gmail_account(self):
+        self.driver.get('https://accounts.google.com/signup')
+        time.sleep(2)
+
+        first_name = self.fake.first_name()
+        last_name = self.fake.last_name()
+        username = f"{first_name.lower()}{last_name.lower()}{random.randint(1000, 9999)}"
+        password = self.fake.password(length=10)
+
+        self.driver.find_element(By.ID, 'firstName').send_keys(first_name)
+        self.driver.find_element(By.ID, 'lastName').send_keys(last_name)
+        self.driver.find_element(By.ID, 'username').send_keys(username)
+        self.driver.find_element(By.NAME, 'Passwd').send_keys(password)
+        self.driver.find_element(By.NAME, 'ConfirmPasswd').send_keys(password)
+        self.driver.find_element(By.XPATH, '//*[@id="accountDetailsNext"]').click()
+
+        time.sleep(2)
+        return username, password
+
+    def solve_captcha(self):
+        # Implement CAPTCHA solving using an external service like 2Captcha or AntiCaptcha
+        pass
+
+    def bypass_phone_verification(self):
+        # Implement phone verification bypass using an external service
+        pass
+
+    def save_account_to_csv(self, email, password):
+        with open('gmail_accounts.csv', mode='a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow([email, password])
+
 class InstagramBot:
     def __init__(self, gmail_address, gmail_app_password):
-        """
-        gmail_address: Ana Gmail adresi
-        gmail_app_password: Gmail'den alınan uygulama şifresi
-        """
         self.base_email = gmail_address
         self.gmail_password = gmail_app_password
         self.current_email = None
         self.fake = Faker('tr_TR')
-        
-        # Chrome ayarları
         chrome_options = uc.ChromeOptions()
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--disable-notifications')
@@ -124,24 +159,17 @@ class InstagramBot:
         chrome_options.add_argument('--ignore-ssl-errors')
         chrome_options.add_argument('--disable-infobars')
         chrome_options.add_argument('--lang=tr-TR')
-        # chrome_options.add_argument('--headless')  # Tarayıcıyı başsız modda çalıştırır
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        
-        # WebDriver kurulumu
         self.driver = uc.Chrome(options=chrome_options)
         self.wait = WebDriverWait(self.driver, 20)
 
     def create_gmail_alias(self):
-        """Gmail alias oluştur - Instagram uyumlu format"""
         try:
             base_name = self.base_email.split('@')[0]
             domain = self.base_email.split('@')[1]
-            # Kullanıcı adınıza özel bir ön ek ekleyin
             timestamp = int(time.time())
             unique_id = f"inst{timestamp}"
-            
-            # base_name ve unique_id'yi birleştir
             self.current_email = f"{base_name}.{unique_id}@{domain}"
             print(f"Oluşturulan Gmail adresi: {self.current_email}")
             return self.current_email
@@ -150,7 +178,6 @@ class InstagramBot:
             return None
     
     def get_verification_code(self, max_attempts=30, delay=10):
-        """Gmail'den doğrulama kodunu al"""
         print("\nDoğrulama kodu bekleniyor...")
         
         try:
@@ -169,7 +196,6 @@ class InstagramBot:
                             email_body = msg_data[0][1]
                             email_message = email.message_from_bytes(email_body)
                             
-                            # Mail içeriğini al
                             body = ""
                             if email_message.is_multipart():
                                 for part in email_message.walk():
@@ -179,7 +205,6 @@ class InstagramBot:
                             else:
                                 body = email_message.get_payload(decode=True).decode()
                             
-                            # Doğrulama kodunu bul (6 haneli)
                             code_match = re.search(r'\b\d{6}\b', body)
                             if code_match:
                                 code = code_match.group(0)
@@ -204,7 +229,6 @@ class InstagramBot:
         return None
 
     def wait_for_element(self, by, value, timeout=20, condition="present"):
-        """Element bekle"""
         try:
             if condition == "clickable":
                 return self.wait.until(EC.element_to_be_clickable((by, value)))
@@ -215,36 +239,29 @@ class InstagramBot:
             return None
 
     def handle_age_verification(self):
-        """Yaş doğrulama formunu doldur"""
         try:
             time.sleep(2)
-            # Yaş doğrulama formu kontrolü
             month_select = self.wait_for_element(By.XPATH, "//select[@title='Ay:']", timeout=5)
             if not month_select:
                 return True
 
             print("Yaş doğrulama işlemi yapılıyor...")
             
-            # Rastgele tarih oluştur (18-30 yaş arası)
             month = random.randint(1, 12)
             day = random.randint(1, 28)
             year = datetime.now().year - random.randint(18, 30)
             
-            # Ay seç
             month_select.send_keys(f"{month}")
             time.sleep(random.uniform(0.5, 1.0))
             
-            # Gün seç
             day_select = self.driver.find_element(By.XPATH, "//select[@title='Gün:']")
             day_select.send_keys(f"{day}")
             time.sleep(random.uniform(0.5, 1.0))
             
-            # Yıl seç
             year_select = self.driver.find_element(By.XPATH, "//select[@title='Yıl:']")
             year_select.send_keys(f"{year}")
             time.sleep(random.uniform(0.5, 1.0))
             
-            # İleri butonunu bul ve tıkla
             for button_text in ['İleri', 'Next']:
                 try:
                     next_button = self.driver.find_element(By.XPATH, f"//button[text()='{button_text}']")
@@ -261,9 +278,7 @@ class InstagramBot:
             return False
 
     def enter_verification_code(self, code):
-        """Doğrulama kodunu gir"""
         try:
-            # Farklı kod giriş alanı seçicilerini dene
             selectors = [
                 "//input[@name='email_confirmation_code']",
                 "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']",
@@ -285,14 +300,12 @@ class InstagramBot:
                     continue
 
             if code_input:
-                # Kodu yavaşça gir
                 for digit in code:
                     code_input.send_keys(digit)
                     time.sleep(random.uniform(0.1, 0.3))
                 
                 time.sleep(1)
                 
-                # Onayla butonlarını dene
                 confirm_buttons = [
                     "//button[text()='Onayla']",
                     "//button[text()='Confirm']",
@@ -325,24 +338,19 @@ class InstagramBot:
             return False
 
     def create_account(self):
-        """Instagram hesabı oluştur"""
         try:
-            # Gmail alias oluştur
             email = self.create_gmail_alias()
             if not email:
                 raise Exception("Email oluşturulamadı")
 
-            # Instagram'ı aç
             self.driver.get('https://www.instagram.com/accounts/emailsignup/')
             print("Instagram kayıt sayfası açıldı")
             time.sleep(random.uniform(2, 4))
 
-            # Fake bilgiler oluştur
             username = f"{self.fake.user_name()}_{random.randint(100,999)}"
             password = f"Pass_{self.fake.password(length=10)}#1"
             full_name = self.fake.name()
 
-            # Form elemanlarını bul ve doldur
             fields = {
                 'emailOrPhone': email,
                 'fullName': full_name,
@@ -360,7 +368,6 @@ class InstagramBot:
                     print(f"{field_name} alanı doldurma hatası: {e}")
                     raise
 
-            # Submit butonunu bul ve tıkla
             submit_button = self.wait_for_element(By.XPATH, '//button[@type="submit"]', condition="clickable")
             if submit_button:
                 submit_button.click()
@@ -369,14 +376,11 @@ class InstagramBot:
             else:
                 raise Exception("Submit butonu bulunamadı")
 
-            # Yaş doğrulama
             if not self.handle_age_verification():
                 print("Yaş doğrulama başarısız olabilir")
 
-            # Doğrulama kodunu bekle ve gir
             verification_code = self.get_verification_code()
             if verification_code:
-                # Doğrulama kod alanını bulmak için farklı seçiciler deneyelim
                 selectors = [
                     "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']",
                     "//input[@name='email_confirmation_code']",
@@ -398,13 +402,11 @@ class InstagramBot:
                         continue
 
                 if code_input:
-                    # Kodu yavaşça gir
                     for digit in verification_code:
                         code_input.send_keys(digit)
                         time.sleep(random.uniform(0.1, 0.3))
                     time.sleep(1)
 
-                    # Tüm olası onay buton seçicilerini dene
                     confirm_buttons = [
                         "//button[contains(text(), 'Onayla')]",
                         "//button[contains(text(), 'Confirm')]",
@@ -434,7 +436,6 @@ class InstagramBot:
                         print("Onay butonu bulunamadı")
                 else:
                     print("Doğrulama kodu giriş alanı bulunamadı")
-                    # Sayfa kaynağını kaydet
                     try:
                         with open("page_source.html", "w", encoding="utf-8") as f:
                             f.write(self.driver.page_source)
@@ -444,7 +445,6 @@ class InstagramBot:
             else:
                 print("Doğrulama kodu alınamadı")
 
-            # Hesap bilgilerini kaydet
             self.save_account_details(email, username, password)
             print("\nHesap oluşturma işlemi tamamlandı!")
             return True
@@ -454,7 +454,6 @@ class InstagramBot:
             return False
 
     def save_account_details(self, email, username, password):
-        """Hesap bilgilerini kaydet"""
         try:
             with open('hesap_kayitlari.txt', 'a', encoding='utf-8') as f:
                 f.write(f"\nKayıt Zamanı: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -467,15 +466,19 @@ class InstagramBot:
             print(f"Bilgi kaydetme hatası: {e}")
 
 if __name__ == "__main__":
-    # Gmail bilgilerinizi girin
-    GMAIL_ADDRESS = "siyahmakalem@gmail.com"  # Gmail adresinizi girin
-    GMAIL_APP_PASSWORD = "knig sptg hcgh axfw"  # Gmail uygulama şifrenizi girin
-    
-    print("Instagram Bot başlatılıyor...")
-    print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerekebilir.")
-    
-    bot = InstagramBot(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-    success = bot.create_account()
+    proxy_manager = ProxyManager()
+    working_proxy = proxy_manager.get_working_proxy()
+    if working_proxy:
+        print(f"Working proxy: {working_proxy}")
+    else:
+        print("No working proxy found")
+
+    gmail_bot = GmailBot()
+    gmail_username, gmail_password = gmail_bot.create_gmail_account()
+    gmail_bot.save_account_to_csv(gmail_username, gmail_password)
+
+    instagram_bot = InstagramBot(gmail_username, gmail_password)
+    success = instagram_bot.create_account()
     
     if not success:
         print("Hesap oluşturulamadı")
