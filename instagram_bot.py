@@ -76,7 +76,7 @@ class ProxyManager:
             try:
                 print(f"Proxy kaynağı kontrol ediliyor: {source}")
                 response = requests.get(source, timeout=10)
-                if response.status_code == 200):
+                if response.status_code == 200:
                     if source.endswith('.txt'):
                         proxies = response.text.strip().split('\n')
                     else:
@@ -126,7 +126,6 @@ class GmailBot:
         self.driver.find_element(By.ID, 'firstName').send_keys(first_name)
         self.driver.find_element(By.ID, 'lastName').send_keys(last_name)
         
-        # Bekleyerek username alanının yüklenmesini sağla
         username_field = self.wait_for_element(By.ID, 'username')
         if username_field:
             username_field.send_keys(username)
@@ -137,7 +136,14 @@ class GmailBot:
         
         self.driver.find_element(By.NAME, 'Passwd').send_keys(password)
         self.driver.find_element(By.NAME, 'ConfirmPasswd').send_keys(password)
-        self.driver.find_element(By.XPATH, '//*[@id="accountDetailsNext"]').click()
+        
+        next_button = self.wait_for_element(By.XPATH, '//span[text()="Next"]/..')
+        if next_button:
+            next_button.click()
+        else:
+            print("Next butonu bulunamadı.")
+            self.save_page_source("gmail_signup_error.html")
+            return None, None
 
         time.sleep(2)
         return username, password
@@ -153,7 +159,6 @@ class GmailBot:
             return None
 
     def save_page_source(self, filename):
-        """Hata durumunda sayfa kaynağını kaydet"""
         try:
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(self.driver.page_source)
@@ -162,11 +167,9 @@ class GmailBot:
             print(f"Sayfa kaynağı kaydetme hatası: {e}")
 
     def solve_captcha(self):
-        # Implement CAPTCHA solving using an external service like 2Captcha or AntiCaptcha
         pass
 
     def bypass_phone_verification(self):
-        # Implement phone verification bypass using an external service
         pass
 
     def save_account_to_csv(self, email, password):
@@ -490,4 +493,40 @@ class InstagramBot:
                 f.write(f"Şifre: {password}\n")
                 f.write("-" * 50 + "\n")
             print("\nHesap bilgileri 'hesap_kayitlari.txt' dosyasına kaydedildi")
-       
+        except Exception as e:
+            print(f"Bilgi kaydetme hatası: {e}")
+
+if __name__ == "__main__":
+    proxy_manager = ProxyManager()
+    working_proxy = proxy_manager.get_working_proxy()
+    if working_proxy:
+        print(f"Working proxy: {working_proxy}")
+    else:
+        print("No working proxy found")
+
+    gmail_bot = GmailBot()
+    gmail_username, gmail_password = gmail_bot.create_gmail_account()
+    
+    if gmail_username and gmail_password:
+        gmail_bot.save_account_to_csv(gmail_username, gmail_password)
+        print(f"Gmail hesabı oluşturuldu: {gmail_username}")
+        
+        instagram_bot = InstagramBot(gmail_username, gmail_password)
+        success = instagram_bot.create_account()
+        
+        if not success:
+            print("Instagram hesabı oluşturulamadı")
+    else:
+        print("Gmail hesabı oluşturulamadı")
+    
+    try:
+        gmail_bot.driver.quit()
+    except:
+        pass
+        
+    try:
+        instagram_bot.driver.quit()
+    except:
+        pass
+    
+    input("\nÇıkmak için Enter'a basın...")
