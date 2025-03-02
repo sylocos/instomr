@@ -11,7 +11,7 @@ import requests
 import random
 import time
 from faker import Faker
-import json
+import csv
 import os
 import imaplib
 import email
@@ -98,6 +98,118 @@ class ProxyManager:
                 continue
 
         return None
+
+class GmailAccountCreator:
+    def __init__(self):
+        self.fake = Faker()
+        self.proxy_manager = ProxyManager()
+        chrome_options = uc.ChromeOptions()
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_argument('--disable-notifications')
+        chrome_options.add_argument('--ignore-certificate-errors')
+        chrome_options.add_argument('--ignore-ssl-errors')
+        chrome_options.add_argument('--disable-infobars')
+        chrome_options.add_argument('--lang=en-US')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        self.driver = uc.Chrome(options=chrome_options)
+        self.wait = WebDriverWait(self.driver, 20)
+
+    def solve_captcha(self, site_key, url):
+        api_key = 'your_2captcha_api_key'  # 2Captcha API anahtarınızı buraya ekleyin
+        try:
+            # CAPTCHA çözme isteği gönder
+            captcha_id = requests.post(
+                'http://2captcha.com/in.php',
+                data={'key': api_key, 'method': 'userrecaptcha', 'googlekey': site_key, 'pageurl': url}
+            ).text.split('|')[1]
+
+            # CAPTCHA çözümünü bekle
+            recaptcha_answer = requests.get(
+                f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}"
+            ).text
+
+            while 'CAPCHA_NOT_READY' in recaptcha_answer:
+                time.sleep(5)
+                recaptcha_answer = requests.get(
+                    f"http://2captcha.com/res.php?key={api_key}&action=get&id={captcha_id}"
+                ).text
+
+            recaptcha_answer = recaptcha_answer.split('|')[1]
+            return recaptcha_answer
+
+        except Exception as e:
+            print(f"CAPTCHA çözme hatası: {e}")
+            return None
+
+    def create_gmail_account(self):
+        try:
+            self.driver.get('https://accounts.google.com/signup')
+            print("Gmail kayıt sayfası açıldı")
+            time.sleep(random.uniform(2, 4))
+
+            first_name = self.fake.first_name()
+            last_name = self.fake.last_name()
+            username = f"{first_name.lower()}{last_name.lower()}{random.randint(1000, 9999)}"
+            password = f"{self.fake.password(length=15)}#1"
+
+            fields = {
+                'firstName': first_name,
+                'lastName': last_name,
+                'Username': username,
+                'Passwd': password,
+                'ConfirmPasswd': password
+            }
+
+            for field_name, value in fields.items():
+                try:
+                    field = self.wait.until(EC.presence_of_element_located((By.NAME, field_name)))
+                    if field:
+                        for char in value:
+                            field.send_keys(char)
+                            time.sleep(random.uniform(0.1, 0.3))
+                        time.sleep(random.uniform(0.5, 1.0))
+                except Exception as e:
+                    print(f"{field_name} alanı doldurma hatası: {e}")
+                    raise
+
+            next_button = self.wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="accountDetailsNext"]/div/button/span')))
+            if next_button:
+                next_button.click()
+                print("Form gönderildi")
+                time.sleep(random.uniform(2, 4))
+            else:
+                raise Exception("Next butonu bulunamadı")
+
+            # CAPTCHA çözme
+            site_key = self.driver.find_element(By.CLASS_NAME, 'g-recaptcha').get_attribute('data-sitekey')
+            captcha_solution = self.solve_captcha(site_key, self.driver.current_url)
+
+            if captcha_solution:
+                self.driver.execute_script(f'document.getElementById("g-recaptcha-response").innerHTML = "{captcha_solution}"')
+                self.driver.find_element(By.ID, 'submit').click()
+                print("CAPTCHA çözüldü ve form gönderildi")
+            else:
+                raise Exception("CAPTCHA çözülemedi")
+
+            return {
+                'email': f"{username}@gmail.com",
+                'password': password
+            }
+
+        except Exception as e:
+            print(f"Hesap oluşturma hatası: {e}")
+            return None
+
+        finally:
+            try:
+                self.driver.save_screenshot("gmail_son_durum.png")
+                print("Son durum ekran görüntüsü kaydedildi: gmail_son_durum.png")
+            except:
+                pass
+
+            if self.driver:
+                self.driver.quit()
 
 class InstagramBot:
     def __init__(self, gmail_address, gmail_app_password):
@@ -380,27 +492,13 @@ class InstagramBot:
 
     def save_account_details(self, email, username, password):
         try:
-            with open('hesap_kayitlari.txt', 'a', encoding='utf-8') as f:
-                f.write(f"\nKayıt Zamanı: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Email: {email}\n")
-                f.write(f"Kullanıcı Adı: {username}\n")
-                f.write(f"Şifre: {password}\n")
-                f.write("-" * 50 + "\n")
-            print("\nHesap bilgileri 'hesap_kayitlari.txt' dosyasına kaydedildi")
+            with open('hesap_kayitlari.csv', 'a', newline='', encoding='utf-8') as csvfile:
+                csvwriter = csv.writer(csvfile)
+                csvwriter.writerow([datetime.now().strftime('%Y-%m-%d %H:%M:%S'), email, username, password])
+            print("\nHesap bilgileri 'hesap_kayitlari.csv' dosyasına kaydedildi")
         except Exception as e:
             print(f"Bilgi kaydetme hatası: {e}")
 
 if __name__ == "__main__":
-    GMAIL_ADDRESS = "siyahmakalem@gmail.com"
-    GMAIL_APP_PASSWORD = "knig sptg hcgh axfw"  # Gmail Uygulama Şifresi
-    
     print("Instagram Bot başlatılıyor...")
-    print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerekebilir.")
-    
-    bot = InstagramBot(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-    success = bot.create_account()
-    
-    if not success:
-        print("Hesap oluşturulamadı")
-    
-    input("\nÇıkmak için Enter'a basın...")
+    print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerek")
