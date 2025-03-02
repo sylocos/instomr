@@ -2,10 +2,10 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.webdriver.common.action_chains import ActionChains
 import undetected_chromedriver as uc
 import requests
 import random
@@ -142,6 +142,95 @@ class GmailAccountCreator:
             print(f"CAPTCHA çözme hatası: {e}")
             return None
 
+    def click_next_button(self):
+        """Next butonunu bulmak ve tıklamak için geliştirilmiş fonksiyon"""
+        button_found = False
+        
+        # Tüm olası buton selektörleri
+        selectors = [
+            (By.CSS_SELECTOR, "button[jsname='LgbsSe']"),
+            (By.CSS_SELECTOR, "button.VfPpkd-LgbsSe-OWXEXe-k8QpJ"),
+            (By.XPATH, "//button[.//span[contains(text(), 'Next')]]"),
+            (By.XPATH, "//button[.//span[@jsname='V67aGc']]"),
+            (By.CSS_SELECTOR, "#accountDetailsNext button"),
+            (By.CSS_SELECTOR, "button[type='button']"),
+        ]
+        
+        print("Next butonu aranıyor...")
+        
+        # Her bir selektörü dene
+        for by, selector in selectors:
+            try:
+                print(f"Denenen selektör: {selector}")
+                
+                # Butonun görünür olmasını bekle
+                button = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((by, selector))
+                )
+                
+                # Butonun tıklanabilir olmasını bekle
+                button = WebDriverWait(self.driver, 10).until(
+                    EC.element_to_be_clickable((by, selector))
+                )
+                
+                # Butona scroll yap
+                self.driver.execute_script("arguments[0].scrollIntoView(true);", button)
+                time.sleep(1)
+                
+                # Önce JavaScript ile tıklamayı dene
+                try:
+                    print("JavaScript ile tıklama deneniyor...")
+                    self.driver.execute_script("arguments[0].click();", button)
+                    button_found = True
+                    print("Buton JavaScript ile tıklandı!")
+                    break
+                except Exception as js_error:
+                    print(f"JavaScript tıklama hatası: {js_error}")
+                    
+                    # JavaScript başarısız olursa normal tıklama dene
+                    try:
+                        print("Normal tıklama deneniyor...")
+                        button.click()
+                        button_found = True
+                        print("Buton normal yöntemle tıklandı!")
+                        break
+                    except Exception as click_error:
+                        print(f"Normal tıklama hatası: {click_error}")
+                        
+                        # Son çare olarak Actions kullan
+                        try:
+                            print("Actions ile tıklama deneniyor...")
+                            actions = ActionChains(self.driver)
+                            actions.move_to_element(button)
+                            actions.click()
+                            actions.perform()
+                            button_found = True
+                            print("Buton Actions ile tıklandı!")
+                            break
+                        except Exception as action_error:
+                            print(f"Actions tıklama hatası: {action_error}")
+                            continue
+                            
+            except Exception as e:
+                print(f"Selektör hatası: {e}")
+                continue
+        
+        if not button_found:
+            # Debug bilgisi kaydet
+            try:
+                self.driver.save_screenshot("button_error.png")
+                with open("page_source.html", "w", encoding="utf-8") as f:
+                    f.write(self.driver.page_source)
+                print("Debug bilgileri kaydedildi: button_error.png ve page_source.html")
+            except:
+                pass
+            
+            raise Exception("Next butonu bulunamadı veya tıklanamadı!")
+        
+        # Tıklama başarılı olduysa biraz bekle
+        time.sleep(2)
+        return button_found
+
     def create_gmail_account(self):
         try:
             self.driver.get('https://accounts.google.com/signup')
@@ -173,13 +262,9 @@ class GmailAccountCreator:
                     print(f"{field_name} alanı doldurma hatası: {e}")
                     raise
 
-            next_button = self.wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="accountDetailsNext"]/div/button')))
-            if next_button:
-                next_button.click()
-                print("Form gönderildi")
-                time.sleep(random.uniform(2, 4))
-            else:
-                raise Exception("Next butonu bulunamadı")
+            # Yeni click_next_button fonksiyonunu kullan
+            if not self.click_next_button():
+                raise Exception("Next butonuna tıklanamadı")
 
             # CAPTCHA çözme
             site_key = self.driver.find_element(By.CLASS_NAME, 'g-recaptcha').get_attribute('data-sitekey')
@@ -410,7 +495,7 @@ class InstagramBot:
                 return False
             else:
                 print("Doğrulama kodu giriş alanı bulunamadı")
-                return False
+                                return False
 
         except Exception as e:
             print(f"Kod girişi hatası: {e}")
