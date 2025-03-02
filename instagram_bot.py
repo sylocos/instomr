@@ -424,19 +424,24 @@ class InstagramBot:
             return False
 
     def create_account(self):
+        """Instagram hesabı oluştur"""
         try:
+            # Gmail alias oluştur
             email = self.create_gmail_alias()
             if not email:
                 raise Exception("Email oluşturulamadı")
 
+            # Instagram'ı aç
             self.driver.get('https://www.instagram.com/accounts/emailsignup/')
             print("Instagram kayıt sayfası açıldı")
             time.sleep(random.uniform(2, 4))
 
+            # Fake bilgiler oluştur
             username = f"{self.fake.user_name()}_{random.randint(100,999)}"
             password = f"Pass_{self.fake.password(length=10)}#1"
             full_name = self.fake.name()
 
+            # Form elemanlarını bul ve doldur
             fields = {
                 'emailOrPhone': email,
                 'fullName': full_name,
@@ -454,6 +459,7 @@ class InstagramBot:
                     print(f"{field_name} alanı doldurma hatası: {e}")
                     raise
 
+            # Submit butonunu bul ve tıkla
             submit_button = self.wait_for_element(By.XPATH, '//button[@type="submit"]', condition="clickable")
             if submit_button:
                 submit_button.click()
@@ -462,11 +468,14 @@ class InstagramBot:
             else:
                 raise Exception("Submit butonu bulunamadı")
 
+            # Yaş doğrulama
             if not self.handle_age_verification():
                 print("Yaş doğrulama başarısız olabilir")
 
+            # Doğrulama kodunu bekle ve gir
             verification_code = self.get_verification_code()
             if verification_code:
+                # Doğrulama kod alanını bulmak için farklı seçiciler deneyelim
                 selectors = [
                     "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']",
                     "//input[@name='email_confirmation_code']",
@@ -488,11 +497,13 @@ class InstagramBot:
                         continue
 
                 if code_input:
+                    # Kodu yavaşça gir
                     for digit in verification_code:
                         code_input.send_keys(digit)
                         time.sleep(random.uniform(0.1, 0.3))
                     time.sleep(1)
 
+                    # Tüm olası onay buton seçicilerini dene
                     confirm_buttons = [
                         "//button[contains(text(), 'Onayla')]",
                         "//button[contains(text(), 'Confirm')]",
@@ -501,20 +512,43 @@ class InstagramBot:
                         "//div[contains(@role, 'button')]//*[contains(text(), 'Confirm')]",
                         "//button[contains(@class, 'submit')]"
                     ]
-for button_xpath in confirm_buttons:
-    try:
-        confirm_button = self.wait_for_element(
-            By.XPATH,
-            button_xpath,
-            timeout=5,
-            condition="clickable"
-        )
-        if confirm_button:
-            confirm_button.click()
-            print("Doğrulama kodu gönderildi")
-            return True
-    except:
-        continue
 
-print("Onay butonu bulunamadı")
-return False
+                    confirm_button = None
+                    for button_xpath in confirm_buttons:
+                        try:
+                            confirm_button = self.wait_for_element(
+                                By.XPATH,
+                                button_xpath,
+                                timeout=5,
+                                condition="clickable"
+                            )
+                            if confirm_button:
+                                confirm_button.click()
+                                print("Doğrulama kodu gönderildi")
+                                time.sleep(2)
+                                break
+                        except:
+                            continue
+
+                    if not confirm_button:
+                        print("Onay butonu bulunamadı")
+                else:
+                    print("Doğrulama kodu giriş alanı bulunamadı")
+                    # Sayfa kaynağını kaydet
+                    try:
+                        with open("page_source.html", "w", encoding="utf-8") as f:
+                            f.write(self.driver.page_source)
+                        print("Sayfa kaynağı 'page_source.html' dosyasına kaydedildi")
+                    except:
+                        pass
+            else:
+                print("Doğrulama kodu alınamadı")
+
+            # Hesap bilgilerini kaydet
+            self.save_account_details(email, username, password)
+            print("\nHesap oluşturma işlemi tamamlandı!")
+            return True
+
+        except Exception as e:
+            print(f"Hesap oluşturma hatası: {e}")
+            return False
