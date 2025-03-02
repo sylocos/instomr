@@ -173,7 +173,7 @@ class GmailAccountCreator:
                     print(f"{field_name} alanı doldurma hatası: {e}")
                     raise
 
-            next_button = self.wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="accountDetailsNext"]/div/button/span')))
+            next_button = self.wait.until(EC.element_to_be_clickable((By.XPATH, '//*[@id="accountDetailsNext"]/div/button')))
             if next_button:
                 next_button.click()
                 print("Form gönderildi")
