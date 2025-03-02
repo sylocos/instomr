@@ -501,4 +501,16 @@ class InstagramBot:
 
 if __name__ == "__main__":
     print("Instagram Bot başlatılıyor...")
-    print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerek")
+    print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerekebilir.")
+    
+    gmail_creator = GmailAccountCreator()
+    gmail_account = gmail_creator.create_gmail_account()
+    
+    if gmail_account:
+        instagram_bot = InstagramBot(gmail_account['email'], gmail_account['password'])
+        if instagram_bot.create_account():
+            print("Instagram hesabı başarıyla oluşturuldu")
+        else:
+            print("Instagram hesabı oluşturulamadı")
+    else:
+        print("Gmail hesabı oluşturulamadı")
