@@ -1,6 +1,8 @@
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
@@ -14,9 +16,7 @@ import os
 import imaplib
 import email
 import re
-import csv
 from datetime import datetime
-import string
 
 class ProxyManager:
     def __init__(self):
@@ -99,145 +99,14 @@ class ProxyManager:
 
         return None
 
-class GmailBot:
-    def __init__(self):
-        self.fake = Faker()
-        chrome_options = uc.ChromeOptions()
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--disable-notifications')
-        chrome_options.add_argument('--ignore-certificate-errors')
-        chrome_options.add_argument('--ignore-ssl-errors')
-        chrome_options.add_argument('--disable-infobars')
-        chrome_options.add_argument('--lang=en-US')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        self.driver = uc.Chrome(options=chrome_options)
-        self.wait = WebDriverWait(self.driver, 20)
-
-    def create_gmail_account(self):
-        try:
-            self.driver.get('https://accounts.google.com/signup')
-            time.sleep(3)
-
-            first_name = self.fake.first_name()
-            last_name = self.fake.last_name()
-            username = f"{first_name.lower()}{last_name.lower()}{random.randint(1000, 9999)}"
-            password = self.fake.password(length=12) + "Aa1!"
-
-            # Form doldurma
-            self.driver.find_element(By.ID, 'firstName').send_keys(first_name)
-            time.sleep(random.uniform(0.5, 1.0))
-            self.driver.find_element(By.ID, 'lastName').send_keys(last_name)
-            time.sleep(random.uniform(0.5, 1.0))
-
-            # Next butonunu bulma ve tıklama denemeleri
-            next_button = None
-            try:
-                # CSS Selector ile deneme
-                next_button = self.wait.until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.VfPpkd-LgbsSe-OWXEXe-k8QpJ"))
-                )
-            except:
-                try:
-                    # XPath ile deneme
-                    next_button = self.wait.until(
-                        EC.element_to_be_clickable((By.XPATH, "//span[text()='Next']/parent::button"))
-                    )
-                except:
-                    try:
-                        # JavaScript ile tıklama
-                        next_button = self.driver.find_element(By.XPATH, "//span[text()='Next']/parent::button")
-                        self.driver.execute_script("arguments[0].click();", next_button)
-                        next_button = None
-                    except:
-                        print("Next butonu bulunamadı!")
-                        self.save_page_source("gmail_signup_error.html")
-                        return None, None
-
-            if next_button:
-                try:
-                    next_button.click()
-                except:
-                    try:
-                        self.driver.execute_script("arguments[0].click();", next_button)
-                    except Exception as e:
-                        print(f"Next butonuna tıklama hatası: {e}")
-                        self.save_page_source("gmail_signup_error.html")
-                        return None, None
-
-            time.sleep(2)
-
-            # Kullanıcı adı ve şifre alanları
-            try:
-                username_field = self.wait.until(EC.presence_of_element_located((By.NAME, "Username")))
-                username_field.send_keys(username)
-                time.sleep(random.uniform(0.5, 1.0))
-
-                password_field = self.driver.find_element(By.NAME, "Passwd")
-                password_field.send_keys(password)
-                time.sleep(random.uniform(0.5, 1.0))
-
-                confirm_password_field = self.driver.find_element(By.NAME, "ConfirmPasswd")
-                confirm_password_field.send_keys(password)
-                time.sleep(random.uniform(0.5, 1.0))
-
-                # Son next butonuna tıklama
-                next_button = self.wait.until(
-                    EC.element_to_be_clickable((By.XPATH, "//span[text()='Next']/parent::button"))
-                )
-                next_button.click()
-
-            except Exception as e:
-                print(f"Form doldurma hatası: {e}")
-                self.save_page_source("gmail_signup_error.html")
-                return None, None
-
-            return username, password
-
-        except Exception as e:
-            print(f"Gmail hesabı oluşturma hatası: {e}")
-            self.save_page_source("gmail_signup_error.html")
-            return None, None
-
-    def wait_for_element(self, by, value, timeout=20, condition="present"):
-        try:
-            if condition == "clickable":
-                return self.wait.until(EC.element_to_be_clickable((by, value)))
-            else:
-                return self.wait.until(EC.presence_of_element_located((by, value)))
-        except TimeoutException:
-            print(f"Element bulunamadı: {value}")
-            return None
-
-    def save_page_source(self, filename):
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(self.driver.page_source)
-            print(f"Sayfa kaynağı '{filename}' dosyasına kaydedildi")
-        except Exception as e:
-            print(f"Sayfa kaynağı kaydetme hatası: {e}")
-
-    def solve_captcha(self):
-        pass
-
-    def bypass_phone_verification(self):
-        pass
-
-    def save_account_to_csv(self, email, password):
-        try:
-            with open('gmail_accounts.csv', mode='a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([email, password])
-            print(f"Gmail hesabı kaydedildi: {email}")
-        except Exception as e:
-            print(f"CSV kaydetme hatası: {e}")
-
 class InstagramBot:
     def __init__(self, gmail_address, gmail_app_password):
         self.base_email = gmail_address
         self.gmail_password = gmail_app_password
         self.current_email = None
         self.fake = Faker('tr_TR')
+        self.proxy_manager = ProxyManager()
+        
         chrome_options = uc.ChromeOptions()
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--disable-notifications')
@@ -247,6 +116,7 @@ class InstagramBot:
         chrome_options.add_argument('--lang=tr-TR')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
+        
         self.driver = uc.Chrome(options=chrome_options)
         self.wait = WebDriverWait(self.driver, 20)
 
@@ -298,7 +168,7 @@ class InstagramBot:
                                 mail.close()
                                 mail.logout()
                                 return code
-                            
+                    
                     print(f"Doğrulama kodu bekleniyor... Deneme {attempt + 1}/{max_attempts}")
                     time.sleep(delay)
                     
@@ -316,12 +186,20 @@ class InstagramBot:
 
     def wait_for_element(self, by, value, timeout=20, condition="present"):
         try:
+            print(f"Aranan element: {value}")
             if condition == "clickable":
-                return self.wait.until(EC.element_to_be_clickable((by, value)))
+                element = self.wait.until(EC.element_to_be_clickable((by, value)))
             else:
-                return self.wait.until(EC.presence_of_element_located((by, value)))
+                element = self.wait.until(EC.presence_of_element_located((by, value)))
+            return element
         except TimeoutException:
             print(f"Element bulunamadı: {value}")
+            try:
+                with open("page_source.html", "w", encoding="utf-8") as f:
+                    f.write(self.driver.page_source)
+                print("Sayfa kaynağı 'page_source.html' dosyasına kaydedildi")
+            except:
+                pass
             return None
 
     def handle_age_verification(self):
@@ -365,22 +243,22 @@ class InstagramBot:
 
     def enter_verification_code(self, code):
         try:
-            selectors = [
-                "//input[@name='email_confirmation_code']",
+            code_input_selectors = [
                 "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']",
-                "//input[@name='confirmationCode']",
+                "//input[@name='email_confirmation_code']",
+                "//input[@id='email_confirmation_code']",
                 "//input[@placeholder='Güvenlik Kodu' or @placeholder='Security Code']",
                 "//input[@type='text' and @inputmode='numeric']",
                 "//input[contains(@class, 'confirmation')]",
                 "//input[@autocomplete='one-time-code']"
             ]
-            
+
             code_input = None
-            for selector in selectors:
+            for selector in code_input_selectors:
                 try:
                     code_input = self.wait_for_element(By.XPATH, selector, timeout=5)
                     if code_input:
-                        print(f"Kod giriş alanı bulundu")
+                        print(f"Kod giriş alanı bulundu: {selector}")
                         break
                 except:
                     continue
@@ -389,20 +267,23 @@ class InstagramBot:
                 for digit in code:
                     code_input.send_keys(digit)
                     time.sleep(random.uniform(0.1, 0.3))
-                
                 time.sleep(1)
-                
-                confirm_buttons = [
-                    "//button[text()='Onayla']",
-                    "//button[text()='Confirm']",
-                    "//button[@type='submit']"
+
+                confirm_button_selectors = [
+                    "//button[contains(text(), 'Onayla')]",
+                    "//button[contains(text(), 'Confirm')]",
+                    "//button[@type='submit']",
+                    "//div[contains(@role, 'button')]//*[contains(text(), 'Onayla')]",
+                    "//div[contains(@role, 'button')]//*[contains(text(), 'Confirm')]",
+                    "//button[contains(@class, 'submit')]",
+                    "//div[@role='button'][text()='İleri']"
                 ]
-                
-                for button_xpath in confirm_buttons:
+
+                for selector in confirm_button_selectors:
                     try:
                         confirm_button = self.wait_for_element(
                             By.XPATH,
-                            button_xpath,
+                            selector,
                             timeout=5,
                             condition="clickable"
                         )
@@ -412,36 +293,31 @@ class InstagramBot:
                             return True
                     except:
                         continue
-                
+
                 print("Onay butonu bulunamadı")
                 return False
             else:
-                print("Kod giriş alanı bulunamadı")
+                print("Doğrulama kodu giriş alanı bulunamadı")
                 return False
-                
+
         except Exception as e:
             print(f"Kod girişi hatası: {e}")
             return False
 
     def create_account(self):
-        """Instagram hesabı oluştur"""
         try:
-            # Gmail alias oluştur
             email = self.create_gmail_alias()
             if not email:
                 raise Exception("Email oluşturulamadı")
 
-            # Instagram'ı aç
             self.driver.get('https://www.instagram.com/accounts/emailsignup/')
             print("Instagram kayıt sayfası açıldı")
             time.sleep(random.uniform(2, 4))
 
-            # Fake bilgiler oluştur
             username = f"{self.fake.user_name()}_{random.randint(100,999)}"
             password = f"Pass_{self.fake.password(length=10)}#1"
             full_name = self.fake.name()
 
-            # Form elemanlarını bul ve doldur
             fields = {
                 'emailOrPhone': email,
                 'fullName': full_name,
@@ -453,14 +329,19 @@ class InstagramBot:
                 try:
                     field = self.wait_for_element(By.NAME, field_name)
                     if field:
-                        field.send_keys(value)
+                        for char in value:
+                            field.send_keys(char)
+                            time.sleep(random.uniform(0.1, 0.3))
                         time.sleep(random.uniform(0.5, 1.0))
                 except Exception as e:
                     print(f"{field_name} alanı doldurma hatası: {e}")
                     raise
 
-            # Submit butonunu bul ve tıkla
-            submit_button = self.wait_for_element(By.XPATH, '//button[@type="submit"]', condition="clickable")
+            submit_button = self.wait_for_element(
+                By.XPATH, 
+                '//button[@type="submit"]', 
+                condition="clickable"
+            )
             if submit_button:
                 submit_button.click()
                 print("Form gönderildi")
@@ -468,87 +349,58 @@ class InstagramBot:
             else:
                 raise Exception("Submit butonu bulunamadı")
 
-            # Yaş doğrulama
             if not self.handle_age_verification():
                 print("Yaş doğrulama başarısız olabilir")
 
-            # Doğrulama kodunu bekle ve gir
             verification_code = self.get_verification_code()
             if verification_code:
-                # Doğrulama kod alanını bulmak için farklı seçiciler deneyelim
-                selectors = [
-                    "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']",
-                    "//input[@name='email_confirmation_code']",
-                    "//input[@id='email_confirmation_code']",
-                    "//input[@placeholder='Güvenlik Kodu' or @placeholder='Security Code']",
-                    "//input[@type='text' and @inputmode='numeric']",
-                    "//input[contains(@class, 'confirmation')]",
-                    "//input[@autocomplete='one-time-code']"
-                ]
-                
-                code_input = None
-                for selector in selectors:
-                    try:
-                        code_input = self.wait_for_element(By.XPATH, selector, timeout=5)
-                        if code_input:
-                            print(f"Kod giriş alanı bulundu: {selector}")
-                            break
-                    except:
-                        continue
-
-                if code_input:
-                    # Kodu yavaşça gir
-                    for digit in verification_code:
-                        code_input.send_keys(digit)
-                        time.sleep(random.uniform(0.1, 0.3))
-                    time.sleep(1)
-
-                    # Tüm olası onay buton seçicilerini dene
-                    confirm_buttons = [
-                        "//button[contains(text(), 'Onayla')]",
-                        "//button[contains(text(), 'Confirm')]",
-                        "//button[@type='submit']",
-                        "//div[contains(@role, 'button')]//*[contains(text(), 'Onayla')]",
-                        "//div[contains(@role, 'button')]//*[contains(text(), 'Confirm')]",
-                        "//button[contains(@class, 'submit')]"
-                    ]
-
-                    confirm_button = None
-                    for button_xpath in confirm_buttons:
-                        try:
-                            confirm_button = self.wait_for_element(
-                                By.XPATH,
-                                button_xpath,
-                                timeout=5,
-                                condition="clickable"
-                            )
-                            if confirm_button:
-                                confirm_button.click()
-                                print("Doğrulama kodu gönderildi")
-                                time.sleep(2)
-                                break
-                        except:
-                            continue
-
-                    if not confirm_button:
-                        print("Onay butonu bulunamadı")
+                if self.enter_verification_code(verification_code):
+                    print("Kod girişi başarılı!")
                 else:
-                    print("Doğrulama kodu giriş alanı bulunamadı")
-                    # Sayfa kaynağını kaydet
-                    try:
-                        with open("page_source.html", "w", encoding="utf-8") as f:
-                            f.write(self.driver.page_source)
-                        print("Sayfa kaynağı 'page_source.html' dosyasına kaydedildi")
-                    except:
-                        pass
+                    print("Kod girişi başarısız")
             else:
                 print("Doğrulama kodu alınamadı")
 
-            # Hesap bilgilerini kaydet
             self.save_account_details(email, username, password)
-            print("\nHesap oluşturma işlemi tamamlandı!")
             return True
 
         except Exception as e:
             print(f"Hesap oluşturma hatası: {e}")
             return False
+
+        finally:
+            try:
+                self.driver.save_screenshot("son_durum.png")
+                print("Son durum ekran görüntüsü kaydedildi: son_durum.png")
+            except:
+                pass
+
+            if self.driver:
+                self.driver.quit()
+
+    def save_account_details(self, email, username, password):
+        try:
+            with open('hesap_kayitlari.txt', 'a', encoding='utf-8') as f:
+                f.write(f"\nKayıt Zamanı: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Email: {email}\n")
+                f.write(f"Kullanıcı Adı: {username}\n")
+                f.write(f"Şifre: {password}\n")
+                f.write("-" * 50 + "\n")
+            print("\nHesap bilgileri 'hesap_kayitlari.txt' dosyasına kaydedildi")
+        except Exception as e:
+            print(f"Bilgi kaydetme hatası: {e}")
+
+if __name__ == "__main__":
+    GMAIL_ADDRESS = "siyahmakalem@gmail.com"
+    GMAIL_APP_PASSWORD = "knig sptg hcgh axfw"  # Gmail Uygulama Şifresi
+    
+    print("Instagram Bot başlatılıyor...")
+    print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerekebilir.")
+    
+    bot = InstagramBot(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+    success = bot.create_account()
+    
+    if not success:
+        print("Hesap oluşturulamadı")
+    
+    input("\nÇıkmak için Enter'a basın...")
