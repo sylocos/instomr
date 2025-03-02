@@ -501,10 +501,20 @@ class InstagramBot:
                         "//div[contains(@role, 'button')]//*[contains(text(), 'Confirm')]",
                         "//button[contains(@class, 'submit')]"
                     ]
+for button_xpath in confirm_buttons:
+    try:
+        confirm_button = self.wait_for_element(
+            By.XPATH,
+            button_xpath,
+            timeout=5,
+            condition="clickable"
+        )
+        if confirm_button:
+            confirm_button.click()
+            print("Doğrulama kodu gönderildi")
+            return True
+    except:
+        continue
 
-                    for button_xpath in confirm_buttons:
-                        try:
-                            confirm_button = self.wait_for_element(
-                                By.XPATH,
-                                button_xpath,
-                                timeout
+print("Onay butonu bulunamadı")
+return False
