@@ -504,4 +504,7 @@ class InstagramBot:
 
                     for button_xpath in confirm_buttons:
                         try:
-                            confirm_button = self.wait
+                            confirm_button = self.wait_for_element(
+                                By.XPATH,
+                                button_xpath,
+                                timeout
