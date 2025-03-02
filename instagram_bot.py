@@ -76,7 +76,7 @@ class ProxyManager:
             try:
                 print(f"Proxy kaynağı kontrol ediliyor: {source}")
                 response = requests.get(source, timeout=10)
-                if response.status_code == 200:
+                if response.status_code == 200):
                     if source.endswith('.txt'):
                         proxies = response.text.strip().split('\n')
                     else:
@@ -495,9 +495,8 @@ class InstagramBot:
                 return False
             else:
                 print("Doğrulama kodu giriş alanı bulunamadı")
-                                return False
-
-        except Exception as e:
+                return
+                        except Exception as e:
             print(f"Kod girişi hatası: {e}")
             return False
 
