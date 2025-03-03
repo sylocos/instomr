@@ -104,28 +104,64 @@ class GmailAccountCreator:
     def __init__(self):
         self.fake = Faker()
         self.proxy_manager = ProxyManager()
+        self.fingerprint = BrowserFingerprint()
+        self.last_action_time = time.time()
         
-        # Chrome options güncellemeleri
+        # Chrome profil yolu oluştur
+        chrome_profile_path = os.path.join(os.path.expanduser('~'), 'chrome_profiles', 'gmail_bot')
+        os.makedirs(chrome_profile_path, exist_ok=True)
+        
+        # Chrome options ayarları
         chrome_options = uc.ChromeOptions()
+        fingerprint = self.fingerprint.generate_fingerprint()
+        
+        # Temel Chrome ayarları
+        chrome_options.add_argument(f'--user-agent={fingerprint["user_agent"]}')
+        chrome_options.add_argument(f'--window-size={fingerprint["viewport"][0]},{fingerprint["viewport"][1]}')
+        chrome_options.add_argument(f'--lang={fingerprint["language"]}')
+        chrome_options.add_argument(f'--user-data-dir={chrome_profile_path}')
+        
+        # Otomasyon tespitini engelleyici ayarlar
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--disable-notifications')
         chrome_options.add_argument('--ignore-certificate-errors')
         chrome_options.add_argument('--ignore-ssl-errors')
         chrome_options.add_argument('--disable-infobars')
-        chrome_options.add_argument('--lang=en-US')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--start-maximized')  # Pencereyi tam boyut yap
-        chrome_options.add_argument('--disable-extensions')  # Eklentileri devre dışı bırak
-        chrome_options.add_argument('--disable-popup-blocking')  # Pop-up engelleyiciyi devre dışı bırak
-        chrome_options.add_argument('--disable-gpu')  # GPU kullanımını devre dışı bırak
+        chrome_options.add_argument('--start-maximized')
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-popup-blocking')
+        chrome_options.add_argument('--disable-gpu')
         
-        # User agent ekle
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        # Otomasyon belirteçlerini kaldır
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # WebRTC ve WebGL ayarları
+        prefs = {
+            'webrtc.ip_handling_policy': 'disable_non_proxied_udp',
+            'webrtc.multiple_routes_enabled': False,
+            'webrtc.nonproxied_udp_enabled': False,
+            'profile.default_content_setting_values.notifications': 2,
+            'profile.password_manager_enabled': False,
+            'profile.managed_default_content_settings.images': 1,
+            'disk-cache-size': 4096
+        }
+        chrome_options.add_experimental_option('prefs', prefs)
+        
+        # Proxy kullanımı
+        if self.proxy_manager:
+            proxy = self.proxy_manager.get_working_proxy()
+            if proxy:
+                chrome_options.add_argument(f'--proxy-server=http://{proxy}')
         
         try:
             self.driver = uc.Chrome(options=chrome_options)
             self.wait = WebDriverWait(self.driver, 20)
+            
+            # JavaScript enjeksiyonları
+            self.inject_evasion_scripts()
         except Exception as e:
             print(f"Chrome başlatma hatası: {str(e)}")
             raise
@@ -324,7 +360,82 @@ class GmailAccountCreator:
             
         except Exception as e:
             print(f"Click verification error: {e}")
-            return False        
+            return False 
+    def inject_instagram_evasion_scripts(self):
+        """Instagram için bot tespitini engelleyici JavaScript kodlarını enjekte eder"""
+        evasion_scripts = """
+            // Instagram'ın bot tespitini bypass et
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            
+            // Instagram'ın otomasyon kontrollerini atla
+            const originalFunction = window.Function.prototype.toString;
+            window.Function.prototype.toString = function() {
+                if (this === window.navigator.permissions.query) {
+                    return 'function query() { [native code] }';
+                }
+                return originalFunction.apply(this, arguments);
+            };
+            
+            // Instagram için özel zamanlama simülasyonu
+            const rand = (min, max) => Math.floor(Math.random() * (max - min) + min);
+            const delay = rand(50, 150);
+            
+            const originalDate = Date.now;
+            Date.now = function() {
+                return originalDate() + delay;
+            };
+        """
+        try:
+            self.driver.execute_script(evasion_scripts)
+        except Exception as e:
+            print(f"Instagram script enjeksiyon hatası: {e}")
+    
+    def simulate_instagram_human_behavior(self):
+        """Instagram'da insan davranışlarını simüle eder"""
+        actions = [
+            lambda: time.sleep(random.uniform(0.8, 2.0)),  # Instagram için optimal bekleme
+            lambda: self.driver.execute_script(
+                f"window.scrollBy(0, {random.randint(-200, 200)});"
+            ),  # Instagram feed scroll simülasyonu
+            lambda: ActionChains(self.driver).move_by_offset(
+                random.randint(-40, 40), 
+                random.randint(-40, 40)
+            ).move_by_offset(
+                random.randint(-10, 10), 
+                random.randint(-10, 10)
+            ).perform(),  # İki aşamalı fare hareketi
+            lambda: ActionChains(self.driver).pause(
+                random.uniform(0.2, 0.4)
+            ).send_keys(Keys.TAB if random.random() < 0.2 else Keys.ESCAPE).perform(),
+            lambda: self.add_random_cursor_movement()  # Özel cursor hareketi
+        ]
+        
+        # Instagram için daha doğal davranış döngüsü
+        for _ in range(random.randint(2, 4)):
+            try:
+                random.choice(actions)()
+                if random.random() < 0.4:  # %40 ihtimalle ekstra hareket
+                    time.sleep(random.uniform(0.3, 0.7))
+                    random.choice(actions)()
+            except:
+                continue
+    
+    def add_random_cursor_movement(self):
+        """Instagram için özel imza niteliğinde fare hareketi oluşturur"""
+        try:
+            action = ActionChains(self.driver)
+            # Benzersiz hareket paterni
+            points = [(random.randint(-60, 60), random.randint(-60, 60)) for _ in range(3)]
+            
+            for x, y in points:
+                action.move_by_offset(x, y)
+                action.pause(random.uniform(0.1, 0.3))
+            
+            action.perform()
+        except:
+            pass            
     def create_gmail_account(self):
         try:
             self.driver.get('https://accounts.google.com/signup')
@@ -625,6 +736,37 @@ class GmailAccountCreator:
                     self.driver.quit()
             except:
                 pass
+                
+                
+    # Yeni eklenecek sınıf
+class BrowserFingerprint:
+    def __init__(self):
+        self.user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36"
+        ]
+        
+        self.viewport_sizes = [
+            (1920, 1080), (1366, 768), (1536, 864), (1440, 900), (1280, 720)
+        ]
+        
+        self.languages = ["tr-TR,tr;q=0.9,en;q=0.8", "en-US,en;q=0.9", "en-GB,en;q=0.9"]
+        
+    def generate_fingerprint(self):
+        return {
+            "user_agent": random.choice(self.user_agents),
+            "viewport": random.choice(self.viewport_sizes),
+            "language": random.choice(self.languages),
+            "platform": random.choice(["Windows", "Macintosh", "Linux"]),
+            "webgl_vendor": random.choice(["Google Inc.", "Apple Inc."]),
+            "renderer": random.choice([
+                "ANGLE (AMD Radeon)", 
+                "ANGLE (Intel(R) UHD Graphics)",
+                "ANGLE (NVIDIA GeForce)"
+            ])
+        }            
 class InstagramBot:
     def __init__(self, gmail_address, gmail_app_password):
         self.base_email = gmail_address
@@ -632,20 +774,135 @@ class InstagramBot:
         self.current_email = None
         self.fake = Faker('tr_TR')
         self.proxy_manager = ProxyManager()
+        self.fingerprint = BrowserFingerprint()
+        self.last_action_time = time.time()
+        
+        # Chrome profil yolu
+        chrome_profile_path = os.path.join(os.path.expanduser('~'), 'chrome_profiles', 'instagram_bot')
+        os.makedirs(chrome_profile_path, exist_ok=True)
         
         chrome_options = uc.ChromeOptions()
+        fingerprint = self.fingerprint.generate_fingerprint()
+        
+        # Ana Chrome ayarları
+        chrome_options.add_argument(f'--user-agent={fingerprint["user_agent"]}')
+        chrome_options.add_argument(f'--window-size={fingerprint["viewport"][0]},{fingerprint["viewport"][1]}')
+        chrome_options.add_argument(f'--lang={fingerprint["language"]}')
+        chrome_options.add_argument(f'--user-data-dir={chrome_profile_path}')
+        
+        # Bot tespitini engelleyici ayarlar
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--disable-notifications')
         chrome_options.add_argument('--ignore-certificate-errors')
         chrome_options.add_argument('--ignore-ssl-errors')
         chrome_options.add_argument('--disable-infobars')
-        chrome_options.add_argument('--lang=tr-TR')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         
-        self.driver = uc.Chrome(options=chrome_options)
-        self.wait = WebDriverWait(self.driver, 20)
-
+        # Ek güvenlik ayarları
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        # WebRTC ve diğer özel ayarlar
+        prefs = {
+            'webrtc.ip_handling_policy': 'disable_non_proxied_udp',
+            'webrtc.multiple_routes_enabled': False,
+            'webrtc.nonproxied_udp_enabled': False,
+            'profile.managed_default_content_settings.images': 1,
+            'profile.default_content_setting_values.notifications': 2,
+            'profile.password_manager_enabled': False,
+            'credentials_enable_service': False
+        }
+        chrome_options.add_experimental_option('prefs', prefs)
+        
+        # Proxy ayarları
+        if self.proxy_manager:
+            proxy = self.proxy_manager.get_working_proxy()
+            if proxy:
+                chrome_options.add_argument(f'--proxy-server=http://{proxy}')
+        
+        try:
+            self.driver = uc.Chrome(options=chrome_options)
+            self.wait = WebDriverWait(self.driver, 20)
+            self.inject_evasion_scripts()
+        except Exception as e:
+            print(f"Chrome başlatma hatası: {str(e)}")
+            raise
+    def inject_instagram_evasion_scripts(self):
+        """Instagram için bot tespitini engelleyici JavaScript kodlarını enjekte eder"""
+        evasion_scripts = """
+            // Instagram'ın bot tespitini bypass et
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            
+            // Instagram'ın otomasyon kontrollerini atla
+            const originalFunction = window.Function.prototype.toString;
+            window.Function.prototype.toString = function() {
+                if (this === window.navigator.permissions.query) {
+                    return 'function query() { [native code] }';
+                }
+                return originalFunction.apply(this, arguments);
+            };
+            
+            // Instagram için özel zamanlama simülasyonu
+            const rand = (min, max) => Math.floor(Math.random() * (max - min) + min);
+            const delay = rand(50, 150);
+            
+            const originalDate = Date.now;
+            Date.now = function() {
+                return originalDate() + delay;
+            };
+        """
+        try:
+            self.driver.execute_script(evasion_scripts)
+        except Exception as e:
+            print(f"Instagram script enjeksiyon hatası: {e}")
+    
+    def simulate_instagram_human_behavior(self):
+        """Instagram'da insan davranışlarını simüle eder"""
+        actions = [
+            lambda: time.sleep(random.uniform(0.8, 2.0)),  # Instagram için optimal bekleme
+            lambda: self.driver.execute_script(
+                f"window.scrollBy(0, {random.randint(-200, 200)});"
+            ),  # Instagram feed scroll simülasyonu
+            lambda: ActionChains(self.driver).move_by_offset(
+                random.randint(-40, 40), 
+                random.randint(-40, 40)
+            ).move_by_offset(
+                random.randint(-10, 10), 
+                random.randint(-10, 10)
+            ).perform(),  # İki aşamalı fare hareketi
+            lambda: ActionChains(self.driver).pause(
+                random.uniform(0.2, 0.4)
+            ).send_keys(Keys.TAB if random.random() < 0.2 else Keys.ESCAPE).perform(),
+            lambda: self.add_random_cursor_movement()  # Özel cursor hareketi
+        ]
+        
+        # Instagram için daha doğal davranış döngüsü
+        for _ in range(random.randint(2, 4)):
+            try:
+                random.choice(actions)()
+                if random.random() < 0.4:  # %40 ihtimalle ekstra hareket
+                    time.sleep(random.uniform(0.3, 0.7))
+                    random.choice(actions)()
+            except:
+                continue
+    
+    def add_random_cursor_movement(self):
+        """Instagram için özel imza niteliğinde fare hareketi oluşturur"""
+        try:
+            action = ActionChains(self.driver)
+            # Benzersiz hareket paterni
+            points = [(random.randint(-60, 60), random.randint(-60, 60)) for _ in range(3)]
+            
+            for x, y in points:
+                action.move_by_offset(x, y)
+                action.pause(random.uniform(0.1, 0.3))
+            
+            action.perform()
+        except:
+            pass
     def create_gmail_alias(self):
         try:
             base_name = self.base_email.split('@')[0]
