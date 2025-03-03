@@ -11,112 +11,100 @@ import time
 from faker import Faker
 import json
 import os
-import imaplib
-import email
 import re
 from datetime import datetime
 import string
 
-class ProxyManager:
+class TempMailIO:
     def __init__(self):
-        self.proxies = []
-        self.current_proxy = None
-        self.working_proxies = []  # Çalışan proxyleri sakla
-        self.working_proxies_file = 'working_proxies.txt'
-        self.proxy_sources = [
-            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-            "https://raw.githubusercontent.com/mertguvencli/http-proxy-list/main/proxy-list/data.txt",
-            "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=yes&anonymity=all",
-            "https://proxylist.geonode.com/api/proxy-list?limit=100&page=1&sort_by=lastChecked&sort_type=desc&protocols=http%2Chttps"
-        ]
-        self.load_working_proxies()
+        self.api_url = "https://api.internal.temp-mail.io/api/v4/email"
+        self.current_email = None
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
 
-    def load_working_proxies(self):
-        """Daha önce çalışan proxyleri yükle"""
+    def create_email(self):
         try:
-            if os.path.exists(self.working_proxies_file):
-                with open(self.working_proxies_file, 'r') as f:
-                    self.working_proxies = [line.strip() for line in f if line.strip()]
-                print(f"{len(self.working_proxies)} adet kayıtlı proxy yüklendi")
-        except:
-            self.working_proxies = []
-
-    def save_working_proxy(self, proxy):
-        """Çalışan proxy'i kaydet"""
-        if proxy and proxy not in self.working_proxies:
-            self.working_proxies.append(proxy)
-            try:
-                with open(self.working_proxies_file, 'a') as f:
-                    f.write(f"{proxy}\n")
-            except:
-                pass
-
-    def test_proxy(self, proxy, quick=True):
-        """Proxy test et"""
-        try:
-            timeout = 5 if quick else 10
-            response = requests.get(
-                'https://www.instagram.com',
-                proxies={'http': f'http://{proxy}', 'https': f'http://{proxy}'},
-                timeout=timeout
+            print("Geçici email oluşturuluyor...")
+            username = ''.join(random.choices(string.ascii_lowercase, k=10))
+            domain = "unigeol.com"  # temp-mail.io'nun stabil domaini
+            self.current_email = f"{username}@{domain}"
+            
+            response = requests.post(
+                f"{self.api_url}/new",
+                json={"email": self.current_email},
+                headers=self.headers
             )
-            return response.status_code == 200
-        except:
-            return False
+            
+            if response.status_code in [200, 201]:
+                print(f"Email başarıyla oluşturuldu: {self.current_email}")
+                return self.current_email
+            else:
+                print(f"Email oluşturma yanıt kodu: {response.status_code}")
+                return self.current_email  # Yine de emaili döndür
+                
+        except Exception as e:
+            print(f"Email oluşturma hatası: {str(e)}")
+            return None
 
-    def get_working_proxy(self):
-        """Çalışan proxy bul - önce kayıtlı proxylerden dene"""
-        # Önce kayıtlı proxyleri dene
-        if self.working_proxies:
-            random.shuffle(self.working_proxies)
-            for proxy in self.working_proxies[:3]:  # İlk 3 kayıtlı proxy'i dene
-                print(f"Kayıtlı proxy test ediliyor: {proxy}")
-                if self.test_proxy(proxy, quick=True):
-                    self.current_proxy = proxy
-                    print(f"✓ Çalışan proxy bulundu: {proxy}")
-                    return proxy
+    def get_messages(self):
+        try:
+            if not self.current_email:
+                return []
+                
+            response = requests.get(
+                f"{self.api_url}/{self.current_email}/messages",
+                headers=self.headers
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            return []
+            
+        except Exception as e:
+            print(f"Mesaj alma hatası: {str(e)}")
+            return []
 
-        # Yeni proxy listesi yükle
-        for source in self.proxy_sources:
+    def get_verification_code(self, max_attempts=30, delay=10):
+        print(f"\nDoğrulama kodu bekleniyor: {self.current_email}")
+        
+        for attempt in range(max_attempts):
             try:
-                print(f"Proxy kaynağı kontrol ediliyor: {source}")
-                response = requests.get(source, timeout=10)
-                if response.status_code == 200:
-                    if source.endswith('.txt'):
-                        proxies = response.text.strip().split('\n')
-                    else:  # JSON API
-                        data = response.json()
-                        proxies = [f"{p['ip']}:{p['port']}" for p in data.get('data', [])]
+                messages = self.get_messages()
+                
+                for message in messages:
+                    subject = message.get('subject', '').lower()
+                    body = message.get('body_text', message.get('body_html', ''))
                     
-                    # Her proxy'i test et
-                    for proxy in proxies:
-                        proxy = proxy.strip()
-                        if proxy:
-                            print(f"Yeni proxy test ediliyor: {proxy}")
-                            if self.test_proxy(proxy):
-                                self.current_proxy = proxy
-                                self.save_working_proxy(proxy)
-                                print(f"✓ Çalışan proxy bulundu: {proxy}")
-                                return proxy
+                    if 'instagram' in subject or 'instagram' in body.lower():
+                        # Önce subject'te ara
+                        code_match = re.search(r'\b\d{6}\b', subject)
+                        if not code_match:
+                            # Sonra body'de ara
+                            code_match = re.search(r'\b\d{6}\b', body)
+                            
+                        if code_match:
+                            code = code_match.group(0)
+                            print(f"Doğrulama kodu bulundu: {code}")
+                            return code
+                
+                print(f"Deneme {attempt + 1}/{max_attempts}: Kod bekleniyor...")
+                time.sleep(delay)
                 
             except Exception as e:
-                print(f"Proxy kaynağı hatası ({source}): {e}")
-                continue
-
+                print(f"Kod kontrol hatası: {str(e)}")
+                time.sleep(delay)
+                
+        print("Doğrulama kodu bulunamadı!")
         return None
 
 class InstagramBot:
-    def __init__(self, gmail_address, gmail_app_password):
-        """
-        gmail_address: Ana Gmail adresi
-        gmail_app_password: Gmail'den alınan uygulama şifresi
-        """
-        self.base_email = gmail_address
-        self.gmail_password = gmail_app_password
-        self.current_email = None
-        self.fake = Faker()
+    def __init__(self):
+        self.temp_mail = TempMailIO()
+        self.fake = Faker('tr_TR')
         
-        # Chrome ayarları
         chrome_options = uc.ChromeOptions()
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--disable-notifications')
@@ -124,108 +112,127 @@ class InstagramBot:
         chrome_options.add_argument('--ignore-ssl-errors')
         chrome_options.add_argument('--disable-infobars')
         chrome_options.add_argument('--lang=tr-TR')
-        # chrome_options.add_argument('--headless')  # Tarayıcıyı başsız modda çalıştırır
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        
-        # WebDriver kurulumu
-        self.driver = uc.Chrome(options=chrome_options)
-        self.wait = WebDriverWait(self.driver, 20)
-
-    def create_gmail_alias(self):
-        """Gmail alias oluştur - Instagram uyumlu format"""
-        try:
-            base_name = self.base_email.split('@')[0]
-            domain = self.base_email.split('@')[1]
-            # Kullanıcı adınıza özel bir ön ek ekleyin
-            timestamp = int(time.time())
-            unique_id = f"inst{timestamp}"
-            
-            # base_name ve unique_id'yi birleştir
-            self.current_email = f"{base_name}.{unique_id}@{domain}"
-            print(f"Oluşturulan Gmail adresi: {self.current_email}")
-            return self.current_email
-        except Exception as e:
-            print(f"Gmail adresi oluşturma hatası: {e}")
-            return None
-    
-    def get_verification_code(self, max_attempts=30, delay=10):
-        """Gmail'den doğrulama kodunu al"""
-        print("\nDoğrulama kodu bekleniyor...")
+        chrome_options.add_argument('--window-size=1920,1080')
         
         try:
-            mail = imaplib.IMAP4_SSL("imap.gmail.com")
-            mail.login(self.base_email, self.gmail_password)
-            
-            for attempt in range(max_attempts):
-                try:
-                    mail.select("INBOX")
-                    search_criteria = '(FROM "security@mail.instagram.com" UNSEEN)'
-                    _, message_numbers = mail.search(None, search_criteria)
-                    
-                    if message_numbers[0]:
-                        for num in message_numbers[0].split():
-                            _, msg_data = mail.fetch(num, "(RFC822)")
-                            email_body = msg_data[0][1]
-                            email_message = email.message_from_bytes(email_body)
-                            
-                            # Mail içeriğini al
-                            body = ""
-                            if email_message.is_multipart():
-                                for part in email_message.walk():
-                                    if part.get_content_type() == "text/plain":
-                                        body = part.get_payload(decode=True).decode()
-                                        break
-                            else:
-                                body = email_message.get_payload(decode=True).decode()
-                            
-                            # Doğrulama kodunu bul (6 haneli)
-                            code_match = re.search(r'\b\d{6}\b', body)
-                            if code_match:
-                                code = code_match.group(0)
-                                print(f"Doğrulama kodu bulundu: {code}")
-                                mail.close()
-                                mail.logout()
-                                return code
-                            
-                    print(f"Doğrulama kodu bekleniyor... Deneme {attempt + 1}/{max_attempts}")
-                    time.sleep(delay)
-                    
-                except Exception as e:
-                    print(f"Mail kontrol hatası: {e}")
-                    continue
-            
-            mail.close()
-            mail.logout()
-            
+            self.driver = uc.Chrome(options=chrome_options)
+            self.wait = WebDriverWait(self.driver, 20)
+            print("Chrome başarıyla başlatıldı")
         except Exception as e:
-            print(f"Mail sunucusu hatası: {e}")
-        
-        return None
+            print(f"Chrome başlatma hatası: {str(e)}")
+            raise
 
     def wait_for_element(self, by, value, timeout=20, condition="present"):
-        """Element bekle"""
         try:
             if condition == "clickable":
-                return self.wait.until(EC.element_to_be_clickable((by, value)))
+                element = self.wait.until(EC.element_to_be_clickable((by, value)))
             else:
-                return self.wait.until(EC.presence_of_element_located((by, value)))
+                element = self.wait.until(EC.presence_of_element_located((by, value)))
+            return element
         except TimeoutException:
             print(f"Element bulunamadı: {value}")
             return None
+        except Exception as e:
+            print(f"Element beklenirken hata: {str(e)}")
+            return None
+
+    def create_account(self):
+        try:
+            # Instagram'ı aç
+            self.driver.get('https://www.instagram.com/accounts/emailsignup/')
+            print("Instagram kayıt sayfası açıldı")
+            time.sleep(random.uniform(3, 5))
+
+            # Geçici email oluştur
+            email = self.temp_mail.create_email()
+            if not email:
+                raise Exception("Email oluşturulamadı")
+
+            # Fake bilgiler oluştur
+            username = f"{self.fake.user_name()}_{random.randint(100,999)}"
+            password = f"Pass_{self.fake.password(length=10)}#1"
+            full_name = self.fake.name()
+
+            # Form doldur
+            fields = {
+                'emailOrPhone': email,
+                'fullName': full_name,
+                'username': username,
+                'password': password
+            }
+
+            for field_name, value in fields.items():
+                field = self.wait_for_element(By.NAME, field_name)
+                if not field:
+                    raise Exception(f"{field_name} alanı bulunamadı")
+                    
+                field.clear()
+                for char in value:
+                    field.send_keys(char)
+                    time.sleep(random.uniform(0.1, 0.3))
+                time.sleep(random.uniform(0.5, 1))
+
+            # Kayıt ol butonuna tıkla
+            submit_button = self.wait_for_element(By.XPATH, '//button[@type="submit"]', condition="clickable")
+            if submit_button:
+                submit_button.click()
+                print("Kayıt formu gönderildi")
+                time.sleep(random.uniform(3, 5))
+            else:
+                raise Exception("Kayıt butonu bulunamadı")
+
+            # Yaş doğrulama
+            self.handle_age_verification()
+
+            # Doğrulama kodunu bekle
+            verification_code = self.temp_mail.get_verification_code()
+            if verification_code:
+                # Kodu gir
+                code_input = self.wait_for_element(
+                    By.XPATH, 
+                    "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']"
+                )
+                if code_input:
+                    for digit in verification_code:
+                        code_input.send_keys(digit)
+                        time.sleep(random.uniform(0.1, 0.3))
+                    
+                    # Onayla butonuna tıkla
+                    confirm_button = self.wait_for_element(
+                        By.XPATH, 
+                        "//button[contains(text(), 'Onayla') or contains(text(), 'Confirm')]",
+                        condition="clickable"
+                    )
+                    if confirm_button:
+                        confirm_button.click()
+                        print("Doğrulama kodu onaylandı")
+                        time.sleep(3)
+                    else:
+                        print("Onay butonu bulunamadı")
+                else:
+                    print("Kod giriş alanı bulunamadı")
+
+            # Hesap bilgilerini kaydet
+            self.save_account_details(email, username, password)
+            return True
+
+        except Exception as e:
+            print(f"Hesap oluşturma hatası: {str(e)}")
+            self.save_screenshot("hata")
+            return False
 
     def handle_age_verification(self):
-        """Yaş doğrulama formunu doldur"""
         try:
             time.sleep(2)
-            # Yaş doğrulama formu kontrolü
             month_select = self.wait_for_element(By.XPATH, "//select[@title='Ay:']", timeout=5)
             if not month_select:
                 return True
 
-            print("Yaş doğrulama işlemi yapılıyor...")
+            print("Yaş doğrulama yapılıyor...")
             
-            # Rastgele tarih oluştur (18-30 yaş arası)
+            # 18-30 yaş arası rastgele tarih
             month = random.randint(1, 12)
             day = random.randint(1, 28)
             year = datetime.now().year - random.randint(18, 30)
@@ -244,7 +251,7 @@ class InstagramBot:
             year_select.send_keys(f"{year}")
             time.sleep(random.uniform(0.5, 1.0))
             
-            # İleri butonunu bul ve tıkla
+            # İleri butonuna tıkla
             for button_text in ['İleri', 'Next']:
                 try:
                     next_button = self.driver.find_element(By.XPATH, f"//button[text()='{button_text}']")
@@ -257,97 +264,10 @@ class InstagramBot:
             return False
             
         except Exception as e:
-            print(f"Yaş doğrulama hatası: {e}")
-            return False
-
-    def create_account(self):
-        """Instagram hesabı oluştur"""
-        try:
-            # Gmail alias oluştur
-            email = self.create_gmail_alias()
-            if not email:
-                raise Exception("Email oluşturulamadı")
-
-            # Instagram'ı aç
-            self.driver.get('https://www.instagram.com/accounts/emailsignup/')
-            print("Instagram kayıt sayfası açıldı")
-            time.sleep(random.uniform(2, 4))
-
-            # Fake bilgiler oluştur
-            username = f"{self.fake.user_name()}_{random.randint(100,999)}"
-            password = f"Pass_{self.fake.password(length=10)}#1"
-            full_name = self.fake.name()
-
-            # Form elemanlarını bul ve doldur
-            fields = {
-                'emailOrPhone': email,
-                'fullName': full_name,
-                'username': username,
-                'password': password
-            }
-
-            for field_name, value in fields.items():
-                try:
-                    field = self.wait_for_element(By.NAME, field_name)
-                    if field:
-                        field.send_keys(value)
-                        time.sleep(random.uniform(0.5, 1.0))
-                except Exception as e:
-                    print(f"{field_name} alanı doldurma hatası: {e}")
-                    raise
-
-            # Submit butonunu bul ve tıkla
-            submit_button = self.wait_for_element(By.XPATH, '//button[@type="submit"]', condition="clickable")
-            if submit_button:
-                submit_button.click()
-                print("Form gönderildi")
-                time.sleep(random.uniform(2, 4))
-            else:
-                raise Exception("Submit butonu bulunamadı")
-
-            # Yaş doğrulama
-            if not self.handle_age_verification():
-                print("Yaş doğrulama başarısız olabilir")
-
-            # Doğrulama kodunu bekle ve gir
-            verification_code = self.get_verification_code()
-            if verification_code:
-                # Doğrulama kod alanını bul
-                code_input = self.wait_for_element(
-                    By.XPATH, 
-                    "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']"
-                )
-                if code_input:
-                    code_input.send_keys(verification_code)
-                    time.sleep(random.uniform(1, 2))
-                    
-                    # Onayla butonunu bul ve tıkla
-                    confirm_button = self.wait_for_element(
-                        By.XPATH, 
-                        "//button[contains(text(), 'Onayla') or contains(text(), 'Confirm')]",
-                        condition="clickable"
-                    )
-                    if confirm_button:
-                        confirm_button.click()
-                        print("Doğrulama kodu girildi")
-                    else:
-                        print("Onayla butonu bulunamadı")
-                else:
-                    print("Doğrulama kodu giriş alanı bulunamadı")
-            else:
-                print("Doğrulama kodu alınamadı")
-
-            # Hesap bilgilerini kaydet
-            self.save_account_details(email, username, password)
-            print("\nHesap oluşturma işlemi tamamlandı!")
-            return True
-
-        except Exception as e:
-            print(f"Hesap oluşturma hatası: {e}")
+            print(f"Yaş doğrulama hatası: {str(e)}")
             return False
 
     def save_account_details(self, email, username, password):
-        """Hesap bilgilerini kaydet"""
         try:
             with open('hesap_kayitlari.txt', 'a', encoding='utf-8') as f:
                 f.write(f"\nKayıt Zamanı: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -355,22 +275,39 @@ class InstagramBot:
                 f.write(f"Kullanıcı Adı: {username}\n")
                 f.write(f"Şifre: {password}\n")
                 f.write("-" * 50 + "\n")
-            print("\nHesap bilgileri 'hesap_kayitlari.txt' dosyasına kaydedildi")
+            print("\nHesap bilgileri kaydedildi")
         except Exception as e:
-            print(f"Bilgi kaydetme hatası: {e}")
+            print(f"Bilgi kaydetme hatası: {str(e)}")
+
+    def save_screenshot(self, prefix="ekran"):
+        try:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"{prefix}_{timestamp}.png"
+            self.driver.save_screenshot(filename)
+            print(f"Ekran görüntüsü: {filename}")
+        except Exception as e:
+            print(f"Ekran görüntüsü hatası: {str(e)}")
+
+    def __del__(self):
+        try:
+            if hasattr(self, 'driver'):
+                self.driver.quit()
+        except:
+            pass
 
 if __name__ == "__main__":
-    # Gmail bilgilerinizi girin
-    GMAIL_ADDRESS = "siyahmakalem@gmail.com"  # Gmail adresinizi girin
-    GMAIL_APP_PASSWORD = "knig sptg hcgh axfw" # Gmail uygulama şifrenizi girin
-    
     print("Instagram Bot başlatılıyor...")
     print("Not: CAPTCHA görünürse manuel olarak tamamlamanız gerekebilir.")
     
-    bot = InstagramBot(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-    success = bot.create_account()
+    try:
+        bot = InstagramBot()
+        success = bot.create_account()
+        
+        if not success:
+            print("Hesap oluşturulamadı")
+        
+    except Exception as e:
+        print(f"Bot hatası: {str(e)}")
     
-    if not success:
-        print("Hesap oluşturulamadı")
-    
-    input("\nÇıkmak için Enter'a basın...")
+    finally:
+        input("\nÇıkmak için Enter'a basın...")
