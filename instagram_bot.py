@@ -3,109 +3,21 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-import undetected_chromedriver as uc
-import requests
-import random
 import time
+import random
 from faker import Faker
-import json
-import os
 import re
 from datetime import datetime
-import string
-
-class TempMailIO:
-    def __init__(self):
-        self.api_url = "https://api.internal.temp-mail.io/api/v4/email"
-        self.current_email = None
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-
-    def create_email(self):
-        try:
-            print("Geçici email oluşturuluyor...")
-            username = ''.join(random.choices(string.ascii_lowercase, k=10))
-            domain = "unigeol.com"  # temp-mail.io'nun stabil domaini
-            self.current_email = f"{username}@{domain}"
-            
-            response = requests.post(
-                f"{self.api_url}/new",
-                json={"email": self.current_email},
-                headers=self.headers
-            )
-            
-            if response.status_code in [200, 201]:
-                print(f"Email başarıyla oluşturuldu: {self.current_email}")
-                return self.current_email
-            else:
-                print(f"Email oluşturma yanıt kodu: {response.status_code}")
-                return self.current_email  # Yine de emaili döndür
-                
-        except Exception as e:
-            print(f"Email oluşturma hatası: {str(e)}")
-            return None
-
-    def get_messages(self):
-        try:
-            if not self.current_email:
-                return []
-                
-            response = requests.get(
-                f"{self.api_url}/{self.current_email}/messages",
-                headers=self.headers
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            return []
-            
-        except Exception as e:
-            print(f"Mesaj alma hatası: {str(e)}")
-            return []
-
-    def get_verification_code(self, max_attempts=30, delay=10):
-        print(f"\nDoğrulama kodu bekleniyor: {self.current_email}")
-        
-        for attempt in range(max_attempts):
-            try:
-                messages = self.get_messages()
-                
-                for message in messages:
-                    subject = message.get('subject', '').lower()
-                    body = message.get('body_text', message.get('body_html', ''))
-                    
-                    if 'instagram' in subject or 'instagram' in body.lower():
-                        # Önce subject'te ara
-                        code_match = re.search(r'\b\d{6}\b', subject)
-                        if not code_match:
-                            # Sonra body'de ara
-                            code_match = re.search(r'\b\d{6}\b', body)
-                            
-                        if code_match:
-                            code = code_match.group(0)
-                            print(f"Doğrulama kodu bulundu: {code}")
-                            return code
-                
-                print(f"Deneme {attempt + 1}/{max_attempts}: Kod bekleniyor...")
-                time.sleep(delay)
-                
-            except Exception as e:
-                print(f"Kod kontrol hatası: {str(e)}")
-                time.sleep(delay)
-                
-        print("Doğrulama kodu bulunamadı!")
-        return None
 
 class InstagramBot:
     def __init__(self):
-        self.temp_mail = TempMailIO()
         self.fake = Faker('tr_TR')
         
-        chrome_options = uc.ChromeOptions()
+        chrome_options = Options()
+        # Temel ayarlar
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--disable-notifications')
         chrome_options.add_argument('--ignore-certificate-errors')
@@ -114,10 +26,26 @@ class InstagramBot:
         chrome_options.add_argument('--lang=tr-TR')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
+        
+        # Pencere ayarları
+        chrome_options.add_argument('--start-maximized')
         chrome_options.add_argument('--window-size=1920,1080')
         
+        # Ek ayarlar
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-popup-blocking')
+        chrome_options.add_argument('--disable-web-security')
+        
+        # User Agent
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+        
+        # Deneysel özellikler
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
         try:
-            self.driver = uc.Chrome(options=chrome_options)
+            self.driver = webdriver.Chrome(options=chrome_options)
+            self.driver.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'})
             self.wait = WebDriverWait(self.driver, 20)
             print("Chrome başarıyla başlatıldı")
         except Exception as e:
@@ -140,15 +68,67 @@ class InstagramBot:
 
     def create_account(self):
         try:
-            # Instagram'ı aç
-            self.driver.get('https://www.instagram.com/accounts/emailsignup/')
-            print("Instagram kayıt sayfası açıldı")
-            time.sleep(random.uniform(3, 5))
+            # İlk sekmeyi aç - temp-mail.io
+            self.driver.get('https://temp-mail.io/tr')
+            print("Temp-mail.io açıldı")
+            time.sleep(5)
 
-            # Geçici email oluştur
-            email = self.temp_mail.create_email()
-            if not email:
-                raise Exception("Email oluşturulamadı")
+            # Email elementini bul ve değeri al
+            email_element = self.wait_for_element(By.ID, "email")
+            if not email_element:
+                raise Exception("Email elementi bulunamadı")
+            
+            email = email_element.get_attribute("value")
+            print(f"Email alındı: {email}")
+
+            # İlk sekmenin handle'ını kaydet
+            temp_mail_tab = self.driver.current_window_handle
+
+            try:
+                # Yeni sekme aç ve Instagram'a git
+                print("Yeni sekme açılıyor...")
+                # JavaScript ile yeni sekme aç
+                self.driver.execute_script("window.open()")
+                
+                # Tüm sekmeleri al ve yeni sekmeye geç
+                tabs = self.driver.window_handles
+                self.driver.switch_to.window(tabs[-1])
+                
+                print("Instagram sayfasına yönlendiriliyor...")
+                # Önce ana sayfaya git
+                self.driver.get("https://www.instagram.com")
+                time.sleep(5)
+                
+                # Sonra kayıt sayfasına yönlendir
+                self.driver.get("https://www.instagram.com/accounts/emailsignup/")
+                time.sleep(5)
+                
+                print("Instagram kayıt sayfası açıldı")
+                
+            except Exception as e:
+                print(f"Instagram sayfası açma hatası: {str(e)}")
+                
+                try:
+                    print("Alternatif yöntem deneniyor...")
+                    # Alternatif olarak direkt URL ile dene
+                    self.driver.get("https://www.instagram.com")
+                    time.sleep(3)
+                    
+                    # Kayıt ol linkini bul ve tıkla
+                    signup_link = self.wait_for_element(
+                        By.XPATH, 
+                        "//span[contains(text(), 'Kaydol')] | //a[contains(@href, '/accounts/emailsignup')]"
+                    )
+                    if signup_link:
+                        signup_link.click()
+                        time.sleep(3)
+                        print("Kayıt sayfasına yönlendirildi")
+                    else:
+                        raise Exception("Kayıt ol linki bulunamadı")
+                        
+                except Exception as e2:
+                    print(f"Alternatif yöntem hatası: {str(e2)}")
+                    raise
 
             # Fake bilgiler oluştur
             username = f"{self.fake.user_name()}_{random.randint(100,999)}"
@@ -167,7 +147,7 @@ class InstagramBot:
                 field = self.wait_for_element(By.NAME, field_name)
                 if not field:
                     raise Exception(f"{field_name} alanı bulunamadı")
-                    
+                
                 field.clear()
                 for char in value:
                     field.send_keys(char)
@@ -179,16 +159,22 @@ class InstagramBot:
             if submit_button:
                 submit_button.click()
                 print("Kayıt formu gönderildi")
-                time.sleep(random.uniform(3, 5))
+                time.sleep(3)
             else:
                 raise Exception("Kayıt butonu bulunamadı")
 
             # Yaş doğrulama
             self.handle_age_verification()
 
-            # Doğrulama kodunu bekle
-            verification_code = self.temp_mail.get_verification_code()
+            # Temp-mail sekmesine geri dön
+            self.driver.switch_to.window(temp_mail_tab)
+            
+            # Onay kodunu bekle ve al
+            verification_code = self.get_verification_code()
             if verification_code:
+                # Instagram sekmesine geri dön
+                self.driver.switch_to.window(tabs[-1])
+                
                 # Kodu gir
                 code_input = self.wait_for_element(
                     By.XPATH, 
@@ -223,6 +209,42 @@ class InstagramBot:
             self.save_screenshot("hata")
             return False
 
+    def get_verification_code(self, max_attempts=30, delay=10):
+        print("\nDoğrulama kodu bekleniyor...")
+        
+        for attempt in range(max_attempts):
+            try:
+                # Sayfayı yenile
+                self.driver.refresh()
+                time.sleep(2)
+                
+                # Instagram mesajını ara
+                messages = self.wait.until(EC.presence_of_all_elements_located(
+                    (By.CSS_SELECTOR, ".message__subject[data-qa='message-subject']")
+                ))
+                
+                for message in messages:
+                    try:
+                        subject = message.get_attribute("title")
+                        if "Instagram kodunuz" in subject:
+                            code_match = re.search(r'\b\d{6}\b', subject)
+                            if code_match:
+                                code = code_match.group(0)
+                                print(f"Doğrulama kodu bulundu: {code}")
+                                return code
+                    except:
+                        continue
+                
+                print(f"Deneme {attempt + 1}/{max_attempts}: Kod bekleniyor...")
+                time.sleep(delay)
+                
+            except TimeoutException:
+                print(f"Timeout - deneme {attempt + 1}")
+                continue
+                
+        print("Doğrulama kodu bulunamadı!")
+        return None
+
     def handle_age_verification(self):
         try:
             time.sleep(2)
@@ -232,26 +254,21 @@ class InstagramBot:
 
             print("Yaş doğrulama yapılıyor...")
             
-            # 18-30 yaş arası rastgele tarih
             month = random.randint(1, 12)
             day = random.randint(1, 28)
             year = datetime.now().year - random.randint(18, 30)
             
-            # Ay seç
             month_select.send_keys(f"{month}")
             time.sleep(random.uniform(0.5, 1.0))
             
-            # Gün seç
             day_select = self.driver.find_element(By.XPATH, "//select[@title='Gün:']")
             day_select.send_keys(f"{day}")
             time.sleep(random.uniform(0.5, 1.0))
             
-            # Yıl seç
             year_select = self.driver.find_element(By.XPATH, "//select[@title='Yıl:']")
             year_select.send_keys(f"{year}")
             time.sleep(random.uniform(0.5, 1.0))
             
-            # İleri butonuna tıkla
             for button_text in ['İleri', 'Next']:
                 try:
                     next_button = self.driver.find_element(By.XPATH, f"//button[text()='{button_text}']")
@@ -266,6 +283,47 @@ class InstagramBot:
         except Exception as e:
             print(f"Yaş doğrulama hatası: {str(e)}")
             return False
+
+    def get_new_email(self):
+        try:
+            # Mevcut sekmeyi hatırla
+            current_tab = self.driver.current_window_handle
+            
+            # Temp-mail sekmesini bul ve geç
+            for handle in self.driver.window_handles:
+                self.driver.switch_to.window(handle)
+                if "temp-mail.io" in self.driver.current_url:
+                    break
+            
+            # Yeni email butonu
+            random_button = self.wait_for_element(
+                By.CSS_SELECTOR,
+                "button[data-qa='random-button']",
+                condition="clickable"
+            )
+            
+            if random_button:
+                random_button.click()
+                time.sleep(3)
+                
+                email_element = self.wait_for_element(By.ID, "email")
+                if email_element:
+                    email = email_element.get_attribute("value")
+                    print(f"Yeni email alındı: {email}")
+                    
+                    # Önceki sekmeye geri dön
+                    self.driver.switch_to.window(current_tab)
+                    return email
+            
+            # Önceki sekmeye geri dön
+            self.driver.switch_to.window(current_tab)
+            return None
+            
+        except Exception as e:
+            print(f"Yeni email alma hatası: {str(e)}")
+            # Hata durumunda da önceki sekmeye dön
+            self.driver.switch_to.window(current_tab)
+            return None
 
     def save_account_details(self, email, username, password):
         try:
@@ -307,7 +365,4 @@ if __name__ == "__main__":
             print("Hesap oluşturulamadı")
         
     except Exception as e:
-        print(f"Bot hatası: {str(e)}")
-    
-    finally:
-        input("\nÇıkmak için Enter'a basın...")
+        print(f"Bot hat")
