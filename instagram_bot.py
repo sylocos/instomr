@@ -140,107 +140,249 @@ class ProxyManager:
                 print(f"Proxy kaldırma hatası: {e}")
 class GmailAccountCreator:
     def __init__(self):
+        """Gmail hesap oluşturucu başlatıcı"""
         self.fake = Faker()
         self.proxy_manager = ProxyManager()
-        self.driver = None
-        self.wait = None
-
+        
         try:
-            # Chrome ayarlarını yapılandır
-            options = uc.ChromeOptions()
+            # Chrome options güncellemeleri
+            chrome_options = uc.ChromeOptions()
             
-            # Temel ayarlar
-            options.add_argument('--no-sandbox')
-            options.add_argument('--start-maximized')
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-gpu")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--disable-notifications")
-            options.add_argument("--disable-popup-blocking")
-            options.add_argument('--disable-blink-features=AutomationControlled')
-            options.add_argument('--lang=en-US')
+            # Pencere boyutu ve pozisyonu
+            window_sizes = [
+                (1366, 768),
+                (1920, 1080),
+                (1536, 864),
+                (1440, 900),
+                (1600, 900)
+            ]
+            window_size = random.choice(window_sizes)
+            pos_x = random.randint(0, 100)
+            pos_y = random.randint(0, 100)
             
-            # User-Agent ayarı
-            user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            options.add_argument(f'user-agent={user_agent}')
+            chrome_options.add_argument(f"--window-size={window_size[0]},{window_size[1]}")
+            chrome_options.add_argument(f"--window-position={pos_x},{pos_y}")
             
-            # Proxy ayarları
-            working_proxy = self.proxy_manager.get_working_proxy()
-            if working_proxy:
-                if working_proxy in self.proxy_manager.proxy_auth:
-                    auth = self.proxy_manager.proxy_auth[working_proxy]
-                    proxy_url = f"http://{auth['username']}:{auth['password']}@{working_proxy}"
-                else:
-                    proxy_url = f"http://{working_proxy}"
-                options.add_argument(f'--proxy-server={proxy_url}')
-                print(f"Proxy kullanılıyor: {working_proxy}")
-
-            # Tarayıcıyı başlat
+            # User Agent listesi - Chrome 133 için güncellenmiş
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.140 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.130 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.100 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
+            ]
+            self.user_agent = random.choice(user_agents)
+            chrome_options.add_argument(f'--user-agent={self.user_agent}')
+            
+            # Temel Chrome argümanları
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            chrome_options.add_argument('--disable-automation')
+            chrome_options.add_argument('--disable-blink-features')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            
+            # Performans ve güvenlik ayarları
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--disable-software-rasterizer')
+            chrome_options.add_argument('--disable-extensions')
+            chrome_options.add_argument('--disable-notifications')
+            chrome_options.add_argument('--disable-popup-blocking')
+            chrome_options.add_argument('--disable-translate')
+            chrome_options.add_argument('--disable-logging')
+            chrome_options.add_argument('--disable-web-security')
+            chrome_options.add_argument('--no-first-run')
+            chrome_options.add_argument('--no-default-browser-check')
+            
+            # Gizlilik ayarları
+            chrome_options.add_argument('--incognito')
+            chrome_options.add_argument('--disable-infobars')
+            chrome_options.add_argument('--disable-save-password-bubble')
+            chrome_options.add_argument('--disable-single-click-autofill')
+            chrome_options.add_argument('--disable-autofill-keyboard-accessory-view')
+            
+            # Dil ve bölge ayarları
+            chrome_options.add_argument('--lang=en-US')
+            chrome_options.add_argument('--accept-lang=en-US,en;q=0.9')
+            
+            # WebRTC ayarları
+            chrome_options.add_argument('--use-fake-ui-for-media-stream')
+            chrome_options.add_argument('--use-fake-device-for-media-stream')
+            
             print("Chrome başlatılıyor...")
+            
+            # Chrome driver'ı başlat - Chrome 133 için güncellendi
             self.driver = uc.Chrome(
-                headless=False,  # GUI modunda çalış
+                options=chrome_options,
                 use_subprocess=True,
-                options=options
+                version_main=133,  # Chrome 133 için güncellendi
+                driver_executable_path=None,
+                headless=False
             )
             
-            # Pencere boyutunu ayarla
-            self.driver.set_window_size(1920, 1080)
+            # CDP Commands ile WebDriver özelliklerini gizle
+            print("WebDriver özellikleri gizleniyor...")
             
-            # WebDriverWait ayarla
+            # User Agent override
+            self.driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+                "userAgent": self.user_agent,
+                "platform": "Windows",
+                "acceptLanguage": "en-US,en;q=0.9"
+            })
+            
+            # WebDriver gizleme scripti
+            self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                "source": """
+                    // WebDriver özelliğini gizle
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+                    
+                    // Chrome runtime
+                    window.chrome = {
+                        runtime: {},
+                        app: {},
+                        loadTimes: function(){},
+                        csi: function(){},
+                        loadTimes: function(){}
+                    };
+                    
+                    // Plugin ve mimari bilgilerini gizle
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [
+                            {
+                                0: {type: "application/x-google-chrome-pdf"},
+                                description: "Portable Document Format",
+                                filename: "internal-pdf-viewer",
+                                length: 1,
+                                name: "Chrome PDF Plugin"
+                            }
+                        ]
+                    });
+                    
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['en-US', 'en']
+                    });
+                    
+                    Object.defineProperty(navigator, 'platform', {
+                        get: () => 'Win32'
+                    });
+                    
+                    // Permission API'yi modifiye et
+                    const originalQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => (
+                        parameters.name === 'notifications' ?
+                            Promise.resolve({ state: Notification.permission }) :
+                            originalQuery(parameters)
+                    );
+                    
+                    // WebGL vendor ve renderer bilgilerini gizle
+                    const getParameter = WebGLRenderingContext.getParameter;
+                    WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                        if (parameter === 37445) {
+                            return 'Intel Inc.';
+                        }
+                        if (parameter === 37446) {
+                            return 'Intel Iris OpenGL Engine';
+                        }
+                        return getParameter(parameter);
+                    };
+                """
+            })
+            
+            # Network ayarları
+            print("Network ayarları yapılandırılıyor...")
+            self.driver.execute_cdp_cmd('Network.enable', {})
+            self.driver.execute_cdp_cmd('Network.setExtraHTTPHeaders', {
+                'headers': {
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'DNT': '1',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1'
+                }
+            })
+            
+            # WebDriverWait nesnesini oluştur
             self.wait = WebDriverWait(self.driver, 20)
+            print("Chrome başlatıldı ve konfigürasyon tamamlandı")
             
-            # Bot tespitini engelleme JavaScript kodları
-            stealth_js = """
-                // WebDriver özelliğini gizle
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                
-                // User agent özelliklerini güncelle
-                const newProto = navigator.__proto__;
-                delete newProto.webdriver;
-                navigator.__proto__ = newProto;
-                
-                // Plugin ve mime type sayısını ayarla
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-                
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en']
-                });
-            """
-            
-            try:
-                self.driver.execute_script(stealth_js)
-            except Exception as e:
-                print(f"JavaScript enjeksiyon hatası: {e}")
-            
-            # Test bağlantısı
-            print("Bağlantı test ediliyor...")
-            self.driver.get('https://www.google.com')
-            time.sleep(3)
-            
-            if "google" in self.driver.current_url.lower():
-                print("Bağlantı testi başarılı!")
-            else:
-                raise Exception("Bağlantı testi başarısız!")
-
         except Exception as e:
-            print(f"Tarayıcı başlatma hatası: {str(e)}")
-            if self.driver:
+            print(f"Chrome başlatma hatası: {str(e)}")
+            if hasattr(self, 'driver'):
                 try:
                     self.driver.quit()
                 except:
                     pass
             raise
-
-    def __del__(self):
+        
+    def simulate_human_behavior(self):
+        """6. İnsan davranışı simülasyonu"""
         try:
-            if self.driver:
-                self.driver.quit()
-        except:
-            pass
+            # Mouse hareketleri
+            actions = ActionChains(self.driver)
+            for _ in range(random.randint(3, 6)):
+                x_offset = random.randint(-100, 100)
+                y_offset = random.randint(-100, 100)
+                actions.move_by_offset(x_offset, y_offset)
+                actions.pause(random.uniform(0.1, 0.3))
+            actions.perform()
+            
+            # Sayfa scroll
+            scroll_amount = random.randint(100, 300)
+            self.driver.execute_script(f"window.scrollTo(0, {scroll_amount})")
+            time.sleep(random.uniform(0.5, 1.5))
+            
+            # Rastgele bekleme
+            time.sleep(random.uniform(1, 2))
+            
+        except Exception as e:
+            print(f"İnsan davranışı simülasyon hatası: {e}")
+    
+    def prepare_browser(self):
+        """9. Google üzerinden doğal navigasyon"""
+        try:
+            print("Tarayıcı hazırlanıyor...")
+            
+            # Google'a git
+            self.driver.get("https://www.google.com")
+            time.sleep(random.uniform(2, 4))
+            
+            # İnsan davranışı simüle et
+            self.simulate_human_behavior()
+            
+            # Google'da arama yap
+            search_queries = [
+                "create gmail account",
+                "gmail sign up",
+                "how to create google account",
+                "make new gmail"
+            ]
+            
+            search_box = self.wait.until(
+                EC.presence_of_element_located((By.NAME, "q"))
+            )
+            
+            search_query = random.choice(search_queries)
+            for char in search_query:
+                search_box.send_keys(char)
+                time.sleep(random.uniform(0.1, 0.3))
+                
+            search_box.send_keys(Keys.RETURN)
+            time.sleep(random.uniform(2, 4))
+            
+            # Sayfada biraz gezin
+            self.simulate_human_behavior()
+            
+            return True
+            
+        except Exception as e:
+            print(f"Tarayıcı hazırlama hatası: {e}")
+            return False
     def solve_captcha(self, site_key, url):
         api_key = 'your_2captcha_api_key'  # 2Captcha API anahtarınızı buraya ekleyin
         try:
@@ -537,69 +679,92 @@ class GmailAccountCreator:
         try:
             print("Gmail kayıt sayfası açılıyor...")
             self.driver.get('https://accounts.google.com/signup')
-            time.sleep(3)
-            
-            # Hesap oluştur butonları
-            create_account_buttons = [
-                "//span[contains(text(), 'Create account')]",
-                "//span[contains(text(), 'Hesap oluştur')]",
-                "//div[contains(text(), 'Create account')]",
-                "//div[contains(text(), 'Hesap oluştur')]",
-                "//div[contains(text(), 'For myself')]",
-                "//div[contains(text(), 'Kendim için')]"
-            ]
-            
-            # Hesap oluştur butonuna tıkla
-            button_clicked = False
-            for button_xpath in create_account_buttons:
-                try:
-                    button = WebDriverWait(self.driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, button_xpath))
-                    )
-                    button.click()
-                    print(f"Butona tıklandı: {button_xpath}")
-                    button_clicked = True
-                    time.sleep(2)
-                    break
-                except:
-                    continue
-                    
-            if not button_clicked:
-                print("Hesap oluştur butonu bulunamadı!")
-                return False
+            time.sleep(5)
             
             # İsim ve soyisim için fake data oluştur
             self.first_name = self.fake.first_name()
             self.last_name = self.fake.last_name()
             
+            # İsim alanı için selektörler
+            first_name_selectors = [
+                (By.ID, "firstName"),
+                (By.NAME, "firstName"),
+                (By.CSS_SELECTOR, "input[aria-label='First name']"),
+                (By.CSS_SELECTOR, "input.whsOnd.zHQkBf[name='firstName']"),
+                (By.XPATH, "//input[@jsname='YPqjbf'][@name='firstName']")
+            ]
+            
+            # Soyisim alanı için selektörler
+            last_name_selectors = [
+                (By.ID, "lastName"),
+                (By.NAME, "lastName"),
+                (By.CSS_SELECTOR, "input[aria-label='Last name (optional)']"),
+                (By.CSS_SELECTOR, "input.whsOnd.zHQkBf[name='lastName']"),
+                (By.XPATH, "//input[@jsname='YPqjbf'][@name='lastName']")
+            ]
+            
             # İsim alanını doldur
-            try:
-                first_name_input = self.wait.until(
-                    EC.presence_of_element_located((By.NAME, "firstName"))
-                )
+            first_name_input = None
+            for by, selector in first_name_selectors:
+                try:
+                    print(f"İsim alanı deneniyor: {selector}")
+                    first_name_input = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((by, selector))
+                    )
+                    if first_name_input:
+                        break
+                except:
+                    continue
+            
+            if first_name_input:
+                # JavaScript ile değeri ayarla ve event tetikle
+                self.driver.execute_script("""
+                    arguments[0].value = arguments[1];
+                    arguments[0].dispatchEvent(new Event('change'));
+                    arguments[0].dispatchEvent(new Event('input'));
+                """, first_name_input, self.first_name)
+                
+                # Yedek yöntem olarak normal input da gönder
                 first_name_input.clear()
                 for char in self.first_name:
                     first_name_input.send_keys(char)
                     time.sleep(random.uniform(0.1, 0.3))
                 print(f"İsim girildi: {self.first_name}")
-            except:
+            else:
                 print("İsim alanı bulunamadı!")
                 self.driver.save_screenshot("error_firstname.png")
                 return False
-    
+                
             time.sleep(random.uniform(0.5, 1.0))
             
             # Soyisim alanını doldur
-            try:
-                last_name_input = self.wait.until(
-                    EC.presence_of_element_located((By.NAME, "lastName"))
-                )
+            last_name_input = None
+            for by, selector in last_name_selectors:
+                try:
+                    print(f"Soyisim alanı deneniyor: {selector}")
+                    last_name_input = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_element_located((by, selector))
+                    )
+                    if last_name_input:
+                        break
+                except:
+                    continue
+                    
+            if last_name_input:
+                # JavaScript ile değeri ayarla ve event tetikle
+                self.driver.execute_script("""
+                    arguments[0].value = arguments[1];
+                    arguments[0].dispatchEvent(new Event('change'));
+                    arguments[0].dispatchEvent(new Event('input'));
+                """, last_name_input, self.last_name)
+                
+                # Yedek yöntem olarak normal input da gönder
                 last_name_input.clear()
                 for char in self.last_name:
                     last_name_input.send_keys(char)
                     time.sleep(random.uniform(0.1, 0.3))
                 print(f"Soyisim girildi: {self.last_name}")
-            except:
+            else:
                 print("Soyisim alanı bulunamadı!")
                 self.driver.save_screenshot("error_lastname.png")
                 return False
@@ -614,13 +779,15 @@ class GmailAccountCreator:
                 "//span[contains(text(), 'Next')]",
                 "//span[contains(text(), 'İleri')]",
                 "//button[@type='button']//span[contains(text(), 'Next')]",
-                "//button[@type='button']//span[contains(text(), 'İleri')]"
+                "//button[@type='button']//span[contains(text(), 'İleri')]",
+                "//button[contains(@class, 'VfPpkd-LgbsSe')]",
+                "//div[contains(@class, 'VfPpkd-RLmnJb')]"
             ]
             
             next_clicked = False
             for next_xpath in next_buttons:
                 try:
-                    next_button = self.wait.until(
+                    next_button = WebDriverWait(self.driver, 5).until(
                         EC.element_to_be_clickable((By.XPATH, next_xpath))
                     )
                     next_button.click()
@@ -642,7 +809,7 @@ class GmailAccountCreator:
             print(f"İlk sayfa hatası: {e}")
             self.driver.save_screenshot("gmail_first_page_error.png")
             return False
-    
+        
     def second_page(self):
         """İkinci sayfa - Doğum tarihi ve cinsiyet"""
         try:
