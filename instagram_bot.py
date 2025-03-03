@@ -25,123 +25,163 @@ class ProxyManager:
         self.current_proxy = None
         self.working_proxies = []
         self.working_proxies_file = 'working_proxies.txt'
-        self.proxy_sources = [
-            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-            "https://raw.githubusercontent.com/mertguvencli/http-proxy-list/main/proxy-list/data.txt",
-            "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=yes&anonymity=all",
-            "https://proxylist.geonode.com/api/proxy-list?limit=100&page=1&sort_by=lastChecked&sort_type=desc&protocols=http%2Chttps"
-        ]
+        self.proxy_auth_file = 'proxy_auth.txt'
+        self.proxy_auth = {}
         self.load_working_proxies()
+        self.load_proxy_auth()
 
     def load_working_proxies(self):
+        """Çalışan proxyleri dosyadan yükle"""
         try:
             if os.path.exists(self.working_proxies_file):
                 with open(self.working_proxies_file, 'r') as f:
                     self.working_proxies = [line.strip() for line in f if line.strip()]
                 print(f"{len(self.working_proxies)} adet kayıtlı proxy yüklendi")
-        except:
+        except Exception as e:
+            print(f"Proxy yükleme hatası: {e}")
             self.working_proxies = []
 
-    def save_working_proxy(self, proxy):
-        if proxy and proxy not in self.working_proxies:
-            self.working_proxies.append(proxy)
-            try:
-                with open(self.working_proxies_file, 'a') as f:
-                    f.write(f"{proxy}\n")
-            except:
-                pass
-
-    def test_proxy(self, proxy, quick=True):
+    def load_proxy_auth(self):
+        """Proxy kimlik bilgilerini yükle"""
         try:
-            timeout = 5 if quick else 10
-            response = requests.get(
-                'https://www.instagram.com',
-                proxies={'http': f'http://{proxy}', 'https': f'http://{proxy}'},
-                timeout=timeout
-            )
-            return response.status_code == 200
-        except:
-            return False
+            if os.path.exists(self.proxy_auth_file):
+                with open(self.proxy_auth_file, 'r') as f:
+                    for line in f:
+                        if '|' in line:
+                            proxy, auth = line.strip().split('|')
+                            if ':' in auth:
+                                username, password = auth.split(':')
+                                self.proxy_auth[proxy] = {
+                                    'username': username,
+                                    'password': password
+                                }
+        except Exception as e:
+            print(f"Proxy kimlik bilgileri yükleme hatası: {e}")
+
+    def save_proxy_auth(self, proxy, username, password):
+        """Proxy kimlik bilgilerini kaydet"""
+        try:
+            with open(self.proxy_auth_file, 'a') as f:
+                f.write(f"{proxy}|{username}:{password}\n")
+            self.proxy_auth[proxy] = {'username': username, 'password': password}
+            print(f"Proxy kimlik bilgileri kaydedildi: {proxy}")
+        except Exception as e:
+            print(f"Proxy kimlik bilgileri kaydetme hatası: {e}")
 
     def get_working_proxy(self):
-        if self.working_proxies:
-            random.shuffle(self.working_proxies)
-            for proxy in self.working_proxies[:3]:
-                print(f"Kayıtlı proxy test ediliyor: {proxy}")
-                if self.test_proxy(proxy, quick=True):
-                    self.current_proxy = proxy
-                    print(f"✓ Çalışan proxy bulundu: {proxy}")
-                    return proxy
+        """Çalışan bir proxy döndür"""
+        if not self.working_proxies:
+            print("Kayıtlı çalışan proxy bulunamadı!")
+            return None
 
-        for source in self.proxy_sources:
-            try:
-                print(f"Proxy kaynağı kontrol ediliyor: {source}")
-                response = requests.get(source, timeout=10)
-                if response.status_code == 200:
-                    if source.endswith('.txt'):
-                        proxies = response.text.strip().split('\n')
-                    else:
-                        data = response.json()
-                        proxies = [f"{p['ip']}:{p['port']}" for p in data.get('data', [])]
-                    
-                    for proxy in proxies:
-                        proxy = proxy.strip()
-                        if proxy:
-                            print(f"Yeni proxy test ediliyor: {proxy}")
-                            if self.test_proxy(proxy):
-                                self.current_proxy = proxy
-                                self.save_working_proxy(proxy)
-                                print(f"✓ Çalışan proxy bulundu: {proxy}")
-                                return proxy
-                
-            except Exception as e:
-                print(f"Proxy kaynağı hatası ({source}): {e}")
-                continue
+        for proxy in self.working_proxies:
+            print(f"Kayıtlı proxy test ediliyor: {proxy}")
+            if self.test_proxy(proxy):
+                self.current_proxy = proxy
+                return proxy
 
+        print("Çalışan proxy bulunamadı!")
         return None
 
+    def test_proxy(self, proxy):
+        """Proxy'yi test et"""
+        try:
+            test_url = 'https://www.google.com'
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+
+            # Proxy kimlik bilgilerini kontrol et
+            if proxy in self.proxy_auth:
+                auth = self.proxy_auth[proxy]
+                proxy_url = f"http://{auth['username']}:{auth['password']}@{proxy}"
+            else:
+                proxy_url = f"http://{proxy}"
+
+            proxies = {
+                'http': proxy_url,
+                'https': proxy_url
+            }
+
+            response = requests.get(
+                test_url,
+                proxies=proxies,
+                headers=headers,
+                timeout=10,
+                verify=False
+            )
+
+            if response.status_code == 200:
+                print(f"✓ Çalışan proxy bulundu: {proxy}")
+                return True
+
+        except requests.exceptions.ProxyError as e:
+            if '407' in str(e):
+                print(f"Proxy kimlik doğrulama gerekiyor: {proxy}")
+                username = input(f"Proxy {proxy} için kullanıcı adı: ")
+                password = input(f"Proxy {proxy} için şifre: ")
+                self.save_proxy_auth(proxy, username, password)
+                return self.test_proxy(proxy)  # Yeni kimlik bilgileriyle tekrar dene
+            print(f"Proxy bağlantı hatası: {e}")
+        except Exception as e:
+            print(f"Proxy test hatası: {e}")
+        return False
+
+    def remove_dead_proxy(self, proxy):
+        """Çalışmayan proxy'i listeden kaldır"""
+        if proxy in self.working_proxies:
+            self.working_proxies.remove(proxy)
+            try:
+                with open(self.working_proxies_file, 'w') as f:
+                    for p in self.working_proxies:
+                        f.write(f"{p}\n")
+                print(f"Çalışmayan proxy kaldırıldı: {proxy}")
+            except Exception as e:
+                print(f"Proxy kaldırma hatası: {e}")
 class GmailAccountCreator:
     def __init__(self):
         self.fake = Faker()
         self.proxy_manager = ProxyManager()
-        
+        self.driver = None
+        self.wait = None
+
         try:
             # Chrome ayarlarını yapılandır
             options = uc.ChromeOptions()
             
-            # Basit ve temel argümanları ekle
+            # Temel ayarlar
             options.add_argument('--no-sandbox')
             options.add_argument('--start-maximized')
             options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-notifications")
+            options.add_argument("--disable-popup-blocking")
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument('--lang=en-US')
             
-            # User-Agent ayarla
+            # User-Agent ayarı
             user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             options.add_argument(f'user-agent={user_agent}')
             
-            # Proxy varsa ekle
-            if self.proxy_manager:
-                proxy = self.proxy_manager.get_working_proxy()
-                if proxy:
-                    options.add_argument(f'--proxy-server=http://{proxy}')
-            
-            # Chrome'u başlat
-            try:
-                self.driver = uc.Chrome(
-                    options=options,
-                    driver_executable_path=None,  # Otomatik indirme için
-                    version_main=None,  # Otomatik versiyon tespiti
-                )
-            except Exception as e:
-                print(f"İlk deneme başarısız: {e}")
-                # İkinci deneme - Farklı bir yaklaşım
-                try:
-                    options = uc.ChromeOptions()
-                    options.add_argument('--no-sandbox')
-                    self.driver = uc.Chrome(options=options)
-                except Exception as e:
-                    print(f"İkinci deneme başarısız: {e}")
-                    # Son deneme - En basit haliyle
-                    self.driver = uc.Chrome()
+            # Proxy ayarları
+            working_proxy = self.proxy_manager.get_working_proxy()
+            if working_proxy:
+                if working_proxy in self.proxy_manager.proxy_auth:
+                    auth = self.proxy_manager.proxy_auth[working_proxy]
+                    proxy_url = f"http://{auth['username']}:{auth['password']}@{working_proxy}"
+                else:
+                    proxy_url = f"http://{working_proxy}"
+                options.add_argument(f'--proxy-server={proxy_url}')
+                print(f"Proxy kullanılıyor: {working_proxy}")
+
+            # Tarayıcıyı başlat
+            print("Chrome başlatılıyor...")
+            self.driver = uc.Chrome(
+                headless=False,  # GUI modunda çalış
+                use_subprocess=True,
+                options=options
+            )
             
             # Pencere boyutunu ayarla
             self.driver.set_window_size(1920, 1080)
@@ -149,19 +189,58 @@ class GmailAccountCreator:
             # WebDriverWait ayarla
             self.wait = WebDriverWait(self.driver, 20)
             
-            # Temel test yap
-            print("Tarayıcı test ediliyor...")
-            try:
-                self.driver.get('https://www.google.com')
-                time.sleep(3)
-                print("Tarayıcı başarıyla açıldı ve test edildi.")
-            except Exception as e:
-                print(f"Test sırasında hata: {e}")
-                raise
+            # Bot tespitini engelleme JavaScript kodları
+            stealth_js = """
+                // WebDriver özelliğini gizle
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
                 
+                // User agent özelliklerini güncelle
+                const newProto = navigator.__proto__;
+                delete newProto.webdriver;
+                navigator.__proto__ = newProto;
+                
+                // Plugin ve mime type sayısını ayarla
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+                
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en']
+                });
+            """
+            
+            try:
+                self.driver.execute_script(stealth_js)
+            except Exception as e:
+                print(f"JavaScript enjeksiyon hatası: {e}")
+            
+            # Test bağlantısı
+            print("Bağlantı test ediliyor...")
+            self.driver.get('https://www.google.com')
+            time.sleep(3)
+            
+            if "google" in self.driver.current_url.lower():
+                print("Bağlantı testi başarılı!")
+            else:
+                raise Exception("Bağlantı testi başarısız!")
+
         except Exception as e:
-            print(f"Chrome başlatma hatası: {str(e)}")
+            print(f"Tarayıcı başlatma hatası: {str(e)}")
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
             raise
+
+    def __del__(self):
+        try:
+            if self.driver:
+                self.driver.quit()
+        except:
+            pass
     def solve_captcha(self, site_key, url):
         api_key = 'your_2captcha_api_key'  # 2Captcha API anahtarınızı buraya ekleyin
         try:
@@ -434,383 +513,482 @@ class GmailAccountCreator:
             pass            
     def create_gmail_account(self):
         try:
-            # Alternatif Gmail kayıt URL'leri
-            signup_urls = [
+            if not self.first_page():
+                return False
                 
-                'https://accounts.google.com/signup'
+            if not self.second_page():
+                return False
+                
+            if not self.third_page():
+                return False
+                
+            if not self.fourth_page():
+                return False
+                
+            return True
+                
+        except Exception as e:
+            print(f"Gmail hesabı oluşturma hatası: {e}")
+            self.driver.save_screenshot("gmail_error.png")
+            return False
+    
+    def first_page(self):
+        """İlk sayfa - İsim ve Soyisim"""
+        try:
+            print("Gmail kayıt sayfası açılıyor...")
+            self.driver.get('https://accounts.google.com/signup')
+            time.sleep(3)
+            
+            # Hesap oluştur butonları
+            create_account_buttons = [
+                "//span[contains(text(), 'Create account')]",
+                "//span[contains(text(), 'Hesap oluştur')]",
+                "//div[contains(text(), 'Create account')]",
+                "//div[contains(text(), 'Hesap oluştur')]",
+                "//div[contains(text(), 'For myself')]",
+                "//div[contains(text(), 'Kendim için')]"
             ]
             
-            connected = False
-            for url in signup_urls:
+            # Hesap oluştur butonuna tıkla
+            button_clicked = False
+            for button_xpath in create_account_buttons:
                 try:
-                    print(f"Gmail kayıt sayfası deneniyor: {url}")
-                    self.driver.get(url)
-                    time.sleep(3)
-                    
-                    # Sayfanın yüklendiğini doğrula
-                    if "google" in self.driver.current_url.lower():
-                        # Hesap oluşturma butonlarını kontrol et
-                        create_account_buttons = [
-                            "//span[contains(text(), 'Create account')]",
-                            "//span[contains(text(), 'Hesap oluştur')]",
-                            "//div[contains(text(), 'Create account')]",
-                            "//div[contains(text(), 'Hesap oluştur')]",
-                            "//div[contains(text(), 'For myself')]",
-                            "//div[contains(text(), 'Kendim için')]"
-                        ]
-                        
-                        for button_xpath in create_account_buttons:
-                            try:
-                                button = WebDriverWait(self.driver, 5).until(
-                                    EC.element_to_be_clickable((By.XPATH, button_xpath))
-                                )
-                                button.click()
-                                print("Hesap oluşturma butonu tıklandı")
-                                time.sleep(2)
-                                connected = True
-                                break
-                            except:
-                                continue
-                        
-                        if connected:
-                            print(f"Gmail kayıt sayfası başarıyla açıldı: {url}")
-                            break
-                except Exception as e:
-                    print(f"URL denemesi başarısız ({url}): {str(e)}")
-                    continue
-            
-            if not connected:
-                raise Exception("Gmail kayıt sayfasına erişilemedi")
-    
-            first_name = self.fake.first_name()
-            last_name = self.fake.last_name()
-            username = f"{first_name.lower()}{last_name.lower()}{random.randint(1000, 9999)}"
-            password = f"{self.fake.password(length=15)}#1"
-    
-            # İlk sayfa için sadece isim ve soyisim
-            first_page_fields = [
-                ('firstName', first_name),
-                ('lastName', last_name)
-            ]
-    
-            # İlk sayfadaki alanları doldur
-            for field_name, value in first_page_fields:
-                try:
-                    field = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located((By.NAME, field_name))
+                    button = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, button_xpath))
                     )
-                    if field:
-                        field.clear()
-                        for char in value:
-                            field.send_keys(char)
-                            time.sleep(random.uniform(0.1, 0.3))
-                        time.sleep(random.uniform(0.5, 1.0))
-                        print(f"{field_name} alanı dolduruldu")
-                except Exception as e:
-                    print(f"{field_name} alanı doldurma hatası: {str(e)}")
-                    self.driver.save_screenshot(f"error_{field_name}.png")
-                    raise
-    
-            # İlk next butonuna tıkla
-            print("İlk sayfadaki next butonuna tıklanıyor...")
-            if not self.click_next_button():
-                raise Exception("İsim sayfasındaki Next butonuna tıklanamadı")
-    
-            time.sleep(2)  # Sayfa geçişini bekle
-    
-            # İkinci sayfa için doğum tarihi ve cinsiyet
+                    button.click()
+                    print(f"Butona tıklandı: {button_xpath}")
+                    button_clicked = True
+                    time.sleep(2)
+                    break
+                except:
+                    continue
+                    
+            if not button_clicked:
+                print("Hesap oluştur butonu bulunamadı!")
+                return False
+            
+            # İsim ve soyisim için fake data oluştur
+            self.first_name = self.fake.first_name()
+            self.last_name = self.fake.last_name()
+            
+            # İsim alanını doldur
             try:
-                # Doğum günü seçimi
-                day_input = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.ID, "day"))
+                first_name_input = self.wait.until(
+                    EC.presence_of_element_located((By.NAME, "firstName"))
                 )
+                first_name_input.clear()
+                for char in self.first_name:
+                    first_name_input.send_keys(char)
+                    time.sleep(random.uniform(0.1, 0.3))
+                print(f"İsim girildi: {self.first_name}")
+            except:
+                print("İsim alanı bulunamadı!")
+                self.driver.save_screenshot("error_firstname.png")
+                return False
+    
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # Soyisim alanını doldur
+            try:
+                last_name_input = self.wait.until(
+                    EC.presence_of_element_located((By.NAME, "lastName"))
+                )
+                last_name_input.clear()
+                for char in self.last_name:
+                    last_name_input.send_keys(char)
+                    time.sleep(random.uniform(0.1, 0.3))
+                print(f"Soyisim girildi: {self.last_name}")
+            except:
+                print("Soyisim alanı bulunamadı!")
+                self.driver.save_screenshot("error_lastname.png")
+                return False
+                
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # İnsan davranışını taklit et
+            self.add_random_cursor_movement()
+            
+            # İleri butonuna tıkla
+            next_buttons = [
+                "//span[contains(text(), 'Next')]",
+                "//span[contains(text(), 'İleri')]",
+                "//button[@type='button']//span[contains(text(), 'Next')]",
+                "//button[@type='button']//span[contains(text(), 'İleri')]"
+            ]
+            
+            next_clicked = False
+            for next_xpath in next_buttons:
+                try:
+                    next_button = self.wait.until(
+                        EC.element_to_be_clickable((By.XPATH, next_xpath))
+                    )
+                    next_button.click()
+                    next_clicked = True
+                    print("İleri butonuna tıklandı")
+                    time.sleep(2)
+                    break
+                except:
+                    continue
+                    
+            if not next_clicked:
+                print("İleri butonu bulunamadı!")
+                self.driver.save_screenshot("error_next_button.png")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            print(f"İlk sayfa hatası: {e}")
+            self.driver.save_screenshot("gmail_first_page_error.png")
+            return False
+    
+    def second_page(self):
+        """İkinci sayfa - Doğum tarihi ve cinsiyet"""
+        try:
+            print("Doğum tarihi ve cinsiyet sayfası...")
+            
+            # Doğum tarihi alanlarının yüklenmesini bekle
+            try:
+                self.wait.until(EC.presence_of_element_located((By.NAME, "day")))
+            except:
+                print("Doğum tarihi sayfası yüklenemedi!")
+                return False
+                
+            # Gün gir
+            try:
                 day = str(random.randint(1, 28))
+                day_input = self.wait.until(
+                    EC.presence_of_element_located((By.NAME, "day"))
+                )
                 day_input.clear()
                 day_input.send_keys(day)
-                print("Doğum günü girildi")
-    
-                # Ay seçimi
-                month_select = WebDriverWait(self.driver, 10).until(
+                print(f"Gün girildi: {day}")
+            except:
+                print("Gün alanı bulunamadı!")
+                return False
+                
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # Ay seç
+            try:
+                month = str(random.randint(1, 12))
+                month_select = Select(self.wait.until(
                     EC.presence_of_element_located((By.ID, "month"))
-                )
-                month_select = Select(month_select)
-                month_select.select_by_value(str(random.randint(1, 12)))
-                print("Doğum ayı seçildi")
-    
-                # Yıl seçimi
-                year_input = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.ID, "year"))
-                )
+                ))
+                month_select.select_by_value(month)
+                print(f"Ay seçildi: {month}")
+            except:
+                print("Ay alanı bulunamadı!")
+                return False
+                
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # Yıl gir
+            try:
                 # 18-35 yaş arası
                 year = str(datetime.now().year - random.randint(18, 35))
+                year_input = self.wait.until(
+                    EC.presence_of_element_located((By.NAME, "year"))
+                )
                 year_input.clear()
                 year_input.send_keys(year)
-                print("Doğum yılı girildi")
-    
-                # Cinsiyet seçimi
-                gender_select = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.ID, "gender"))
-                )
-                gender_select = Select(gender_select)
-                gender_select.select_by_value(str(random.randint(1, 2)))  # 1: Male, 2: Female
-                print("Cinsiyet seçildi")
-    
-                time.sleep(1)
-    
-                # İkinci next butonuna tıkla
-                print("İkinci sayfadaki next butonuna tıklanıyor...")
-                if not self.click_next_button():
-                    raise Exception("Doğum tarihi sayfasındaki Next butonuna tıklanamadı")
-    
-                time.sleep(2)  # Sayfa geçişini bekle
-    
-            except Exception as e:
-                print(f"Doğum tarihi ve cinsiyet girme hatası: {str(e)}")
-                self.driver.save_screenshot("error_birthday_gender.png")
-                raise
-    
-            # Üçüncü sayfa - Gmail adresi oluşturma
-            try:
-                time.sleep(2)  # Sayfa yüklenmesini bekle
+                print(f"Yıl girildi: {year}")
+            except:
+                print("Yıl alanı bulunamadı!")
+                return False
                 
-                username_taken = True
-                max_attempts = 5  # Maximum deneme sayısı
-                attempt = 0
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # Cinsiyet seç
+            try:
+                gender_select = Select(self.wait.until(
+                    EC.presence_of_element_located((By.ID, "gender"))
+                ))
+                gender = random.choice(['1', '2'])  # 1: Male, 2: Female
+                gender_select.select_by_value(gender)
+                print(f"Cinsiyet seçildi: {'Erkek' if gender=='1' else 'Kadın'}")
+            except:
+                print("Cinsiyet alanı bulunamadı!")
+                return False
+                
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # İleri butonuna tıkla
+            next_buttons = [
+                "//span[contains(text(), 'Next')]",
+                "//span[contains(text(), 'İleri')]",
+                "//button[@type='button']//span[contains(text(), 'Next')]",
+                "//button[@type='button']//span[contains(text(), 'İleri')]"
+            ]
+            
+            next_clicked = False
+            for next_xpath in next_buttons:
+                try:
+                    next_button = self.wait.until(
+                        EC.element_to_be_clickable((By.XPATH, next_xpath))
+                    )
+                    next_button.click()
+                    next_clicked = True
+                    print("İkinci sayfa - İleri butonuna tıklandı")
+                    time.sleep(2)
+                    break
+                except:
+                    continue
+                    
+            if not next_clicked:
+                print("İkinci sayfa - İleri butonu bulunamadı!")
+                self.driver.save_screenshot("error_second_page_next.png")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            print(f"İkinci sayfa hatası: {e}")
+            self.driver.save_screenshot("gmail_second_page_error.png")
+            return False
     
-                while username_taken and attempt < max_attempts:
-                    if attempt > 0:
-                        # Yeni bir username oluştur
-                        username = f"{first_name.lower()}{last_name.lower()}{random.randint(1000, 9999)}"
-                        print(f"Yeni username deneniyor: {username}")
-    
+    def third_page(self):
+        """Üçüncü sayfa - Gmail adresi"""
+        try:
+            print("Gmail adresi oluşturma sayfası...")
+            time.sleep(2)
+            
+            # Kullanıcı adı oluştur
+            username = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(1000, 9999)}"
+            username = ''.join(e for e in username if e.isalnum())
+            
+            username_taken = True
+            max_attempts = 5
+            attempt = 0
+            
+            while username_taken and attempt < max_attempts:
+                if attempt > 0:
+                    username = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(1000, 9999)}"
+                    username = ''.join(e for e in username if e.isalnum())
+                    print(f"Yeni username deneniyor: {username}")
+                    
+                try:
+                    # "Create your own Gmail address" butonu var mı kontrol et
                     try:
-                        # "Create your own Gmail address" butonu var mı kontrol et
-                        try:
-                            create_gmail_button = WebDriverWait(self.driver, 5).until(
-                                EC.element_to_be_clickable((By.XPATH, "//div[@id='selectionc3'][contains(text(), 'Create your own Gmail address')]"))
+                        create_gmail_button = self.wait.until(
+                            EC.element_to_be_clickable(
+                                (By.XPATH, "//div[contains(text(), 'Create your own Gmail address')]")
                             )
-                            # Buton varsa tıkla
-                            try:
-                                create_gmail_button.click()
-                            except:
-                                try:
-                                    self.driver.execute_script("arguments[0].click();", create_gmail_button)
-                                except:
-                                    ActionChains(self.driver).move_to_element(create_gmail_button).click().perform()
-                            print("'Create your own Gmail address' butonuna tıklandı")
-                            time.sleep(2)
-                            
-                            # Alt sekmede açılan input'u bul
-                            email_input = WebDriverWait(self.driver, 10).until(
-                                EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Create a Gmail address']"))
+                        )
+                        create_gmail_button.click()
+                        print("'Create your own Gmail address' butonuna tıklandı")
+                        time.sleep(2)
+                    except:
+                        print("'Create your own Gmail address' butonu bulunamadı")
+                    
+                    # Email input alanını bul
+                    email_input = None
+                    try:
+                        email_input = self.wait.until(
+                            EC.presence_of_element_located(
+                                (By.XPATH, "//input[@aria-label='Create a Gmail address']")
+                            )
+                        )
+                    except:
+                        try:
+                            email_input = self.wait.until(
+                                EC.presence_of_element_located(
+                                    (By.XPATH, "//input[@aria-label='Username' or @name='Username']")
+                                )
                             )
                         except:
-                            # Buton yoksa direkt input'u bul
-                            print("'Create your own Gmail address' butonu bulunamadı, direkt input aranıyor...")
-                            email_input = WebDriverWait(self.driver, 10).until(
-                                EC.presence_of_element_located((By.XPATH, "//input[@aria-label='Username' or @name='Username']"))
-                            )
-                        
-                        # Email input alanını temizle ve yeni username'i gir
+                            print("Email input alanı bulunamadı!")
+                            return False
+                    
+                    if email_input:
                         email_input.clear()
                         for char in username:
                             email_input.send_keys(char)
                             time.sleep(random.uniform(0.1, 0.3))
                         print(f"Email kullanıcı adı girildi: {username}")
-                        time.sleep(1)
-    
-                        # Next butonuna tıkla
-                        print("Email girişi sonrası next butonuna tıklanıyor...")
-                        if not self.click_next_button():
-                            raise Exception("Email sayfasındaki Next butonuna tıklanamadı")
-    
-                        time.sleep(2)  # Next butonuna tıkladıktan sonra bekle
-    
-                        # Username kullanılıyor mu kontrol et
-                        try:
-                            error_message = WebDriverWait(self.driver, 5).until(
-                                EC.presence_of_element_located((By.XPATH, "//div[contains(text(), 'That username is taken')]"))
-                            )
-                            print(f"Bu username kullanımda: {username}")
-                            attempt += 1
-                            continue  # While döngüsüne devam et
-                        except:
-                            # Hata mesajı bulunamadı, username kullanılabilir
-                            username_taken = False
-                            print(f"Username kullanılabilir: {username}")
-                            break  # While döngüsünden çık
-    
-                    except Exception as e:
-                        print(f"Email girişi hatası: {str(e)}")
-                        self.driver.save_screenshot(f"error_email_input_attempt_{attempt}.png")
-                        attempt += 1
-    
-                if username_taken:
-                    raise Exception(f"Kullanılabilir bir username bulunamadı {max_attempts} denemeden sonra")
-    
-            except Exception as e:
-                print(f"Email oluşturma hatası: {str(e)}")
-                self.driver.save_screenshot("error_email_creation.png")
-                raise
-    
-            # Dördüncü sayfa - Şifre girişi
-            try:
-                print("Şifre girişi sayfası bekleniyor...")
-                time.sleep(2)
-    
-                # Şifre alanlarını doldur
-                password_fields = [
-                    ('Passwd', password),  # İlk şifre alanı
-                    ('PasswdAgain', password)  # Şifre onay alanı
-                ]
-    
-                for field_name, value in password_fields:
-                    try:
-                        # Şifre alanını bul
-                        password_field = WebDriverWait(self.driver, 10).until(
-                            EC.presence_of_element_located((By.NAME, field_name))
-                        )
-                        password_field.clear()
-                        # Şifreyi yavaşça gir
-                        for char in value:
-                            password_field.send_keys(char)
-                            time.sleep(random.uniform(0.1, 0.3))
-                        print(f"{field_name} alanına şifre girildi")
-                        time.sleep(random.uniform(0.5, 1.0))
-                    except Exception as e:
-                        print(f"Şifre alanı doldurma hatası ({field_name}): {str(e)}")
-                        self.driver.save_screenshot(f"error_password_{field_name}.png")
-                        raise
-    
-                # Next butonuna tıkla
-                print("Şifre girişi sonrası next butonuna tıklanıyor...")
-                next_button_clicked = False
-                
-                # Farklı next buton selektörleri
-                next_button_selectors = [
-                    (By.XPATH, "//button[.//span[contains(text(), 'Next')]]"),
-                    (By.XPATH, "//button[contains(@class, 'VfPpkd-LgbsSe')]"),
-                    (By.CSS_SELECTOR, "button[type='submit']"),
-                    (By.XPATH, "//div[contains(@class, 'VfPpkd-dgl2Hf-ppHlrf-sM5MNb')]//button")
-                ]
-    
-                for by, selector in next_button_selectors:
-                    try:
-                        next_button = WebDriverWait(self.driver, 5).until(
-                            EC.element_to_be_clickable((by, selector))
-                        )
-                        # Farklı tıklama yöntemlerini dene
-                        try:
-                            next_button.click()
-                        except:
-                            try:
-                                self.driver.execute_script("arguments[0].click();", next_button)
-                            except:
-                                ActionChains(self.driver).move_to_element(next_button).click().perform()
                         
-                        next_button_clicked = True
-                        print(f"Şifre sayfasındaki next butonuna tıklandı (selector: {selector})")
-                        break
-                    except:
+                    time.sleep(1)
+                    
+                    # İleri butonuna tıkla
+                    next_buttons = [
+                        "//span[contains(text(), 'Next')]",
+                        "//span[contains(text(), 'İleri')]",
+                        "//button[@type='button']//span[contains(text(), 'Next')]",
+                        "//button[@type='button']//span[contains(text(), 'İleri')]"
+                    ]
+                    
+                    next_clicked = False
+                    for next_xpath in next_buttons:
+                        try:
+                            next_button = self.wait.until(
+                                EC.element_to_be_clickable((By.XPATH, next_xpath))
+                            )
+                            next_button.click()
+                            next_clicked = True
+                            print("Üçüncü sayfa - İleri butonuna tıklandı")
+                            time.sleep(2)
+                            break
+                        except:
+                            continue
+                            
+                    if not next_clicked:
+                        print("Üçüncü sayfa - İleri butonu bulunamadı!")
+                        return False
+                    
+                    # Username kullanılıyor mu kontrol et
+                    try:
+                        error_message = self.wait.until(
+                            EC.presence_of_element_located(
+                                (By.XPATH, "//div[contains(text(), 'That username is taken')]")
+                            )
+                        )
+                        print(f"Bu username kullanımda: {username}")
+                        attempt += 1
                         continue
+                    except:
+                        username_taken = False
+                        self.username = username  # Başarılı username'i kaydet
+                        print(f"Username kullanılabilir: {username}")
+                        break
+                        
+                except Exception as e:
+                    print(f"Email girişi hatası: {e}")
+                    attempt += 1
+                    
+            if username_taken:
+                print("Kullanılabilir username bulunamadı!")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            print(f"Üçüncü sayfa hatası: {e}")
+            self.driver.save_screenshot("gmail_third_page_error.png")
+            return False
     
-                if not next_button_clicked:
-                    raise Exception("Şifre sayfasındaki next butonuna tıklanamadı")
-    
-                time.sleep(2)  # Next butonuna tıkladıktan sonra bekle
-    
-            except Exception as e:
-                print(f"Şifre girişi hatası: {str(e)}")
-                self.driver.save_screenshot("error_password_page.png")
-                raise
-    
-            # CAPTCHA kontrolü ve çözümü
+    def fourth_page(self):
+        """Dördüncü sayfa - Şifre"""
+        try:
+            print("Şifre oluşturma sayfası...")
+            time.sleep(2)
+            
+            # Şifre oluştur
+            self.password = f"{self.fake.word()}{random.randint(100, 999)}!{random.choice(['@','#','$'])}"
+            
+            # Şifre alanlarını doldur
+            password_fields = [
+                ('Passwd', self.password),
+                ('PasswdAgain', self.password)
+            ]
+            
+            for field_name, value in password_fields:
+                try:
+                    password_field = self.wait.until(
+                        EC.presence_of_element_located((By.NAME, field_name))
+                    )
+                    password_field.clear()
+                    for char in value:
+                        password_field.send_keys(char)
+                        time.sleep(random.uniform(0.1, 0.3))
+                    print(f"{field_name} alanına şifre girildi")
+                    time.sleep(random.uniform(0.5, 1.0))
+                except:
+                    print(f"Şifre alanı bulunamadı: {field_name}")
+                    return False
+            
+            # İleri butonuna tıkla
+            next_button_selectors = [
+                (By.XPATH, "//button[.//span[contains(text(), 'Next')]]"),
+                (By.XPATH, "//button[contains(@class, 'VfPpkd-LgbsSe')]"),
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.XPATH, "//div[contains(@class, 'VfPpkd-dgl2Hf-ppHlrf-sM5MNb')]//button"),
+                (By.XPATH, "//span[contains(text(), 'Next')]"),
+                (By.XPATH, "//span[contains(text(), 'İleri')]")
+            ]
+            
+            next_clicked = False
+            for by, selector in next_button_selectors:
+                try:
+                    next_button = self.wait.until(
+                        EC.element_to_be_clickable((by, selector))
+                    )
+                    # Farklı tıklama yöntemlerini dene
+                    try:
+                        next_button.click()
+                    except:
+                        try:
+                            self.driver.execute_script("arguments[0].click();", next_button)
+                        except:
+                            ActionChains(self.driver).move_to_element(next_button).click().perform()
+                    
+                    next_clicked = True
+                    print(f"Dördüncü sayfa - İleri butonuna tıklandı (selector: {selector})")
+                    time.sleep(2)
+                    break
+                except:
+                    continue
+            
+            if not next_clicked:
+                print("Dördüncü sayfa - İleri butonu tıklanamadı!")
+                self.driver.save_screenshot("error_fourth_page_next.png")
+                return False
+                
+            # CAPTCHA kontrolü
             try:
-                captcha_element = WebDriverWait(self.driver, 5).until(
+                captcha_element = self.wait.until(
                     EC.presence_of_element_located((By.CLASS_NAME, 'g-recaptcha'))
                 )
                 if captcha_element:
+                    print("CAPTCHA tespit edildi!")
                     site_key = captcha_element.get_attribute('data-sitekey')
-                    captcha_solution = self.solve_captcha(site_key, self.driver.current_url)
-                    if captcha_solution:
-                        self.driver.execute_script(
-                            f'document.getElementById("g-recaptcha-response").innerHTML = "{captcha_solution}"'
-                        )
-                        submit_button = self.driver.find_element(By.ID, 'submit')
-                        submit_button.click()
-                        print("CAPTCHA çözüldü ve form gönderildi")
+                    if hasattr(self, 'solve_captcha'):
+                        captcha_solution = self.solve_captcha(site_key, self.driver.current_url)
+                        if captcha_solution:
+                            self.driver.execute_script(
+                                f'document.getElementById("g-recaptcha-response").innerHTML = "{captcha_solution}"'
+                            )
+                            print("CAPTCHA çözüldü")
+                        else:
+                            print("CAPTCHA çözülemedi!")
+                            return False
                     else:
-                        print("CAPTCHA çözülemedi, manuel müdahale gerekebilir")
+                        print("CAPTCHA çözme fonksiyonu bulunamadı!")
+                        return False
             except:
-                print("CAPTCHA elementi bulunamadı, devam ediliyor...")
-    
+                print("CAPTCHA bulunamadı, devam ediliyor...")
+                
             # Hesap oluşturma başarılı mı kontrol et
             try:
-                success_element = WebDriverWait(self.driver, 10).until(
+                success_element = self.wait.until(
                     EC.presence_of_element_located((By.XPATH, "//span[contains(text(), 'Welcome')]"))
                 )
                 if success_element:
-                    print("Hesap başarıyla oluşturuldu!")
-                    return {
-                        'email': f"{username}@gmail.com",
-                        'password': password
-                    }
-            except:
-                print("Hesap oluşturma başarılı")
-                        # Hesap oluşturma başarılı mı kontrol et
-            try:
-                success_element = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//span[contains(text(), 'Welcome')]"))
-                )
-                if success_element:
-                    print("Hesap başarıyla oluşturuldu!")
-                    return {
-                        'email': f"{username}@gmail.com",
-                        'password': password
-                    }
+                    print("Gmail hesabı başarıyla oluşturuldu!")
+                    # Hesap bilgilerini kaydet
+                    with open("gmail_accounts.txt", "a") as f:
+                        f.write(f"{self.username}@gmail.com:{self.password}\n")
+                    return True
             except:
                 print("Hesap oluşturma durumu belirsiz")
-                try:
-                    # Alternatif başarı göstergeleri kontrol et
-                    success_indicators = [
-                        "//span[contains(text(), 'Hoş geldiniz')]",
-                        "//div[contains(text(), 'Account created')]",
-                        "//div[contains(text(), 'Hesap oluşturuldu')]",
-                        "//div[contains(@class, 'success')]"
-                    ]
-                    
-                    for indicator in success_indicators:
-                        try:
-                            if self.driver.find_element(By.XPATH, indicator):
-                                print("Hesap başarıyla oluşturuldu! (Alternatif gösterge)")
-                                return {
-                                    'email': f"{username}@gmail.com",
-                                    'password': password
-                                }
-                        except:
-                            continue
-                except:
-                    pass
-                return None
-    
+                self.driver.save_screenshot("account_creation_final.png")
+                return False
+                
+            return True
+            
         except Exception as e:
-            print(f"Hesap oluşturma hatası: {str(e)}")
-            self.driver.save_screenshot("error_account_creation.png")
-            return None
-    
+            print(f"Dördüncü sayfa hatası: {e}")
+            self.driver.save_screenshot("gmail_fourth_page_error.png")
+            return False
+        
         finally:
             try:
+                # Son durumu kaydet
                 self.driver.save_screenshot("gmail_son_durum.png")
                 print("Son durum ekran görüntüsü kaydedildi: gmail_son_durum.png")
             except:
                 pass
-    
-            try:
-                if self.driver:
-                    self.driver.quit()
-            except:
-                pass
-                    
+                        
     def complete_registration(self, username, password):
         """Kayıt işlemini tamamla"""
         try:
