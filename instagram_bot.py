@@ -104,68 +104,64 @@ class GmailAccountCreator:
     def __init__(self):
         self.fake = Faker()
         self.proxy_manager = ProxyManager()
-        self.fingerprint = BrowserFingerprint()
-        self.last_action_time = time.time()
-        
-        # Chrome profil yolu oluştur
-        chrome_profile_path = os.path.join(os.path.expanduser('~'), 'chrome_profiles', 'gmail_bot')
-        os.makedirs(chrome_profile_path, exist_ok=True)
-        
-        # Chrome options ayarları
-        chrome_options = uc.ChromeOptions()
-        fingerprint = self.fingerprint.generate_fingerprint()
-        
-        # Temel Chrome ayarları
-        chrome_options.add_argument(f'--user-agent={fingerprint["user_agent"]}')
-        chrome_options.add_argument(f'--window-size={fingerprint["viewport"][0]},{fingerprint["viewport"][1]}')
-        chrome_options.add_argument(f'--lang={fingerprint["language"]}')
-        chrome_options.add_argument(f'--user-data-dir={chrome_profile_path}')
-        
-        # Otomasyon tespitini engelleyici ayarlar
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--disable-notifications')
-        chrome_options.add_argument('--ignore-certificate-errors')
-        chrome_options.add_argument('--ignore-ssl-errors')
-        chrome_options.add_argument('--disable-infobars')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--start-maximized')
-        chrome_options.add_argument('--disable-extensions')
-        chrome_options.add_argument('--disable-popup-blocking')
-        chrome_options.add_argument('--disable-gpu')
-        
-        # Otomasyon belirteçlerini kaldır
-        chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        # WebRTC ve WebGL ayarları
-        prefs = {
-            'webrtc.ip_handling_policy': 'disable_non_proxied_udp',
-            'webrtc.multiple_routes_enabled': False,
-            'webrtc.nonproxied_udp_enabled': False,
-            'profile.default_content_setting_values.notifications': 2,
-            'profile.password_manager_enabled': False,
-            'profile.managed_default_content_settings.images': 1,
-            'disk-cache-size': 4096
-        }
-        chrome_options.add_experimental_option('prefs', prefs)
-        
-        # Proxy kullanımı
-        if self.proxy_manager:
-            proxy = self.proxy_manager.get_working_proxy()
-            if proxy:
-                chrome_options.add_argument(f'--proxy-server=http://{proxy}')
         
         try:
-            self.driver = uc.Chrome(options=chrome_options)
+            # Chrome ayarlarını yapılandır
+            options = uc.ChromeOptions()
+            
+            # Basit ve temel argümanları ekle
+            options.add_argument('--no-sandbox')
+            options.add_argument('--start-maximized')
+            options.add_argument("--disable-dev-shm-usage")
+            
+            # User-Agent ayarla
+            user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            options.add_argument(f'user-agent={user_agent}')
+            
+            # Proxy varsa ekle
+            if self.proxy_manager:
+                proxy = self.proxy_manager.get_working_proxy()
+                if proxy:
+                    options.add_argument(f'--proxy-server=http://{proxy}')
+            
+            # Chrome'u başlat
+            try:
+                self.driver = uc.Chrome(
+                    options=options,
+                    driver_executable_path=None,  # Otomatik indirme için
+                    version_main=None,  # Otomatik versiyon tespiti
+                )
+            except Exception as e:
+                print(f"İlk deneme başarısız: {e}")
+                # İkinci deneme - Farklı bir yaklaşım
+                try:
+                    options = uc.ChromeOptions()
+                    options.add_argument('--no-sandbox')
+                    self.driver = uc.Chrome(options=options)
+                except Exception as e:
+                    print(f"İkinci deneme başarısız: {e}")
+                    # Son deneme - En basit haliyle
+                    self.driver = uc.Chrome()
+            
+            # Pencere boyutunu ayarla
+            self.driver.set_window_size(1920, 1080)
+            
+            # WebDriverWait ayarla
             self.wait = WebDriverWait(self.driver, 20)
             
-            # JavaScript enjeksiyonları
-            self.inject_evasion_scripts()
+            # Temel test yap
+            print("Tarayıcı test ediliyor...")
+            try:
+                self.driver.get('https://www.google.com')
+                time.sleep(3)
+                print("Tarayıcı başarıyla açıldı ve test edildi.")
+            except Exception as e:
+                print(f"Test sırasında hata: {e}")
+                raise
+                
         except Exception as e:
             print(f"Chrome başlatma hatası: {str(e)}")
             raise
-    
     def solve_captcha(self, site_key, url):
         api_key = 'your_2captcha_api_key'  # 2Captcha API anahtarınızı buraya ekleyin
         try:
@@ -438,9 +434,53 @@ class GmailAccountCreator:
             pass            
     def create_gmail_account(self):
         try:
-            self.driver.get('https://accounts.google.com/signup')
-            print("Gmail kayıt sayfası açıldı")
-            time.sleep(3)
+            # Alternatif Gmail kayıt URL'leri
+            signup_urls = [
+                
+                'https://accounts.google.com/signup'
+            ]
+            
+            connected = False
+            for url in signup_urls:
+                try:
+                    print(f"Gmail kayıt sayfası deneniyor: {url}")
+                    self.driver.get(url)
+                    time.sleep(3)
+                    
+                    # Sayfanın yüklendiğini doğrula
+                    if "google" in self.driver.current_url.lower():
+                        # Hesap oluşturma butonlarını kontrol et
+                        create_account_buttons = [
+                            "//span[contains(text(), 'Create account')]",
+                            "//span[contains(text(), 'Hesap oluştur')]",
+                            "//div[contains(text(), 'Create account')]",
+                            "//div[contains(text(), 'Hesap oluştur')]",
+                            "//div[contains(text(), 'For myself')]",
+                            "//div[contains(text(), 'Kendim için')]"
+                        ]
+                        
+                        for button_xpath in create_account_buttons:
+                            try:
+                                button = WebDriverWait(self.driver, 5).until(
+                                    EC.element_to_be_clickable((By.XPATH, button_xpath))
+                                )
+                                button.click()
+                                print("Hesap oluşturma butonu tıklandı")
+                                time.sleep(2)
+                                connected = True
+                                break
+                            except:
+                                continue
+                        
+                        if connected:
+                            print(f"Gmail kayıt sayfası başarıyla açıldı: {url}")
+                            break
+                except Exception as e:
+                    print(f"URL denemesi başarısız ({url}): {str(e)}")
+                    continue
+            
+            if not connected:
+                raise Exception("Gmail kayıt sayfasına erişilemedi")
     
             first_name = self.fake.first_name()
             last_name = self.fake.last_name()
@@ -716,7 +756,41 @@ class GmailAccountCreator:
                         'password': password
                     }
             except:
+                print("Hesap oluşturma başarılı")
+                        # Hesap oluşturma başarılı mı kontrol et
+            try:
+                success_element = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//span[contains(text(), 'Welcome')]"))
+                )
+                if success_element:
+                    print("Hesap başarıyla oluşturuldu!")
+                    return {
+                        'email': f"{username}@gmail.com",
+                        'password': password
+                    }
+            except:
                 print("Hesap oluşturma durumu belirsiz")
+                try:
+                    # Alternatif başarı göstergeleri kontrol et
+                    success_indicators = [
+                        "//span[contains(text(), 'Hoş geldiniz')]",
+                        "//div[contains(text(), 'Account created')]",
+                        "//div[contains(text(), 'Hesap oluşturuldu')]",
+                        "//div[contains(@class, 'success')]"
+                    ]
+                    
+                    for indicator in success_indicators:
+                        try:
+                            if self.driver.find_element(By.XPATH, indicator):
+                                print("Hesap başarıyla oluşturuldu! (Alternatif gösterge)")
+                                return {
+                                    'email': f"{username}@gmail.com",
+                                    'password': password
+                                }
+                        except:
+                            continue
+                except:
+                    pass
                 return None
     
         except Exception as e:
@@ -736,9 +810,65 @@ class GmailAccountCreator:
                     self.driver.quit()
             except:
                 pass
-                
-                
-    # Yeni eklenecek sınıf
+                    
+    def complete_registration(self, username, password):
+        """Kayıt işlemini tamamla"""
+        try:
+            # Next/İleri butonları için olası seçiciler
+            next_button_selectors = [
+                "//span[contains(text(), 'Next')]/parent::button",
+                "//span[contains(text(), 'İleri')]/parent::button",
+                "//button[@type='submit']",
+                "//div[@role='button'][contains(., 'Next')]",
+                "//div[@role='button'][contains(., 'İleri')]"
+            ]
+            
+            for selector in next_button_selectors:
+                try:
+                    next_button = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, selector))
+                    )
+                    next_button.click()
+                    print("İleri butonuna tıklandı")
+                    time.sleep(2)
+                    break
+                except:
+                    continue
+            
+            # Hesap oluşturma başarılı mı kontrol et
+            success_indicators = [
+                "//span[contains(text(), 'Welcome')]",
+                "//span[contains(text(), 'Hoş geldiniz')]",
+                "//div[contains(text(), 'Account created')]",
+                "//div[contains(text(), 'Hesap oluşturuldu')]"
+            ]
+            
+            for indicator in success_indicators:
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, indicator))
+                    )
+                    print("Hesap başarıyla oluşturuldu!")
+                    return {
+                        'email': f"{username}@gmail.com",
+                        'password': password
+                    }
+                except:
+                    continue
+            
+            print("Hesap oluşturma durumu belirsiz, devam ediliyor...")
+            return {
+                'email': f"{username}@gmail.com",
+                'password': password
+            }
+            
+        except Exception as e:
+            print(f"Kayıt tamamlama hatası: {e}")
+            return None   
+    
+
+
+   # Yeni eklenecek sınıf
 class BrowserFingerprint:
     def __init__(self):
         self.user_agents = [
@@ -774,46 +904,44 @@ class InstagramBot:
         self.current_email = None
         self.fake = Faker('tr_TR')
         self.proxy_manager = ProxyManager()
-        self.fingerprint = BrowserFingerprint()
-        self.last_action_time = time.time()
         
         # Chrome profil yolu
         chrome_profile_path = os.path.join(os.path.expanduser('~'), 'chrome_profiles', 'instagram_bot')
         os.makedirs(chrome_profile_path, exist_ok=True)
         
+        # Chrome options ayarları
         chrome_options = uc.ChromeOptions()
-        fingerprint = self.fingerprint.generate_fingerprint()
         
-        # Ana Chrome ayarları
-        chrome_options.add_argument(f'--user-agent={fingerprint["user_agent"]}')
-        chrome_options.add_argument(f'--window-size={fingerprint["viewport"][0]},{fingerprint["viewport"][1]}')
-        chrome_options.add_argument(f'--lang={fingerprint["language"]}')
-        chrome_options.add_argument(f'--user-data-dir={chrome_profile_path}')
+        # Temel Chrome argümanları
+        chrome_arguments = [
+            '--disable-blink-features=AutomationControlled',
+            '--disable-notifications',
+            '--ignore-certificate-errors',
+            '--ignore-ssl-errors',
+            '--disable-infobars',
+            '--lang=tr-TR',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+            f'--user-data-dir={chrome_profile_path}',
+            '--window-size=1920,1080',
+            f'--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
         
-        # Bot tespitini engelleyici ayarlar
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--disable-notifications')
-        chrome_options.add_argument('--ignore-certificate-errors')
-        chrome_options.add_argument('--ignore-ssl-errors')
-        chrome_options.add_argument('--disable-infobars')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
+        # Argümanları ekle
+        for arg in chrome_arguments:
+            chrome_options.add_argument(arg)
         
-        # Ek güvenlik ayarları
-        chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        # WebRTC ve diğer özel ayarlar
+        # WebRTC ve WebGL ayarları için preferences
         prefs = {
-            'webrtc.ip_handling_policy': 'disable_non_proxied_udp',
-            'webrtc.multiple_routes_enabled': False,
-            'webrtc.nonproxied_udp_enabled': False,
-            'profile.managed_default_content_settings.images': 1,
-            'profile.default_content_setting_values.notifications': 2,
-            'profile.password_manager_enabled': False,
-            'credentials_enable_service': False
+            "webrtc.ip_handling_policy": "disable_non_proxied_udp",
+            "webrtc.multiple_routes_enabled": False,
+            "webrtc.nonproxied_udp_enabled": False,
+            "profile.default_content_setting_values.notifications": 2,
+            "profile.password_manager_enabled": False,
+            "profile.managed_default_content_settings.images": 1,
+            "credentials_enable_service": False
         }
-        chrome_options.add_experimental_option('prefs', prefs)
+        chrome_options.add_experimental_option("prefs", prefs)
         
         # Proxy ayarları
         if self.proxy_manager:
@@ -823,8 +951,10 @@ class InstagramBot:
         
         try:
             self.driver = uc.Chrome(options=chrome_options)
+            self.driver.execute_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
             self.wait = WebDriverWait(self.driver, 20)
-            self.inject_evasion_scripts()
         except Exception as e:
             print(f"Chrome başlatma hatası: {str(e)}")
             raise
