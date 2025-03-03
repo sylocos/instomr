@@ -16,8 +16,8 @@ class InstagramBot:
     def __init__(self):
         self.fake = Faker('tr_TR')
         
+        # Chrome ayarlarını yapılandır
         chrome_options = Options()
-        # Temel ayarlar
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_argument('--disable-notifications')
         chrome_options.add_argument('--ignore-certificate-errors')
@@ -26,17 +26,10 @@ class InstagramBot:
         chrome_options.add_argument('--lang=tr-TR')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        
-        # Pencere ayarları
-        chrome_options.add_argument('--start-maximized')
         chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--start-maximized')
         
-        # Ek ayarlar
-        chrome_options.add_argument('--disable-extensions')
-        chrome_options.add_argument('--disable-popup-blocking')
-        chrome_options.add_argument('--disable-web-security')
-        
-        # User Agent
+        # User agent ekle
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
         
         # Deneysel özellikler
@@ -72,7 +65,7 @@ class InstagramBot:
             self.driver.get('https://temp-mail.io/tr')
             print("Temp-mail.io açıldı")
             time.sleep(5)
-
+    
             # Email elementini bul ve değeri al
             email_element = self.wait_for_element(By.ID, "email")
             if not email_element:
@@ -80,61 +73,33 @@ class InstagramBot:
             
             email = email_element.get_attribute("value")
             print(f"Email alındı: {email}")
-
+    
             # İlk sekmenin handle'ını kaydet
             temp_mail_tab = self.driver.current_window_handle
-
+    
+            # Yeni sekme aç ve Instagram'a git
+            print("Instagram için yeni sekme açılıyor...")
+            self.driver.execute_script("window.open('about:blank', '_blank')")
+            
+            # Yeni sekmeye geç
+            windows = self.driver.window_handles
+            instagram_tab = windows[-1]
+            self.driver.switch_to.window(instagram_tab)
+            
+            # Instagram'ı aç
             try:
-                # Yeni sekme aç ve Instagram'a git
-                print("Yeni sekme açılıyor...")
-                # JavaScript ile yeni sekme aç
-                self.driver.execute_script("window.open()")
-                
-                # Tüm sekmeleri al ve yeni sekmeye geç
-                tabs = self.driver.window_handles
-                self.driver.switch_to.window(tabs[-1])
-                
-                print("Instagram sayfasına yönlendiriliyor...")
-                # Önce ana sayfaya git
-                self.driver.get("https://www.instagram.com")
-                time.sleep(5)
-                
-                # Sonra kayıt sayfasına yönlendir
                 self.driver.get("https://www.instagram.com/accounts/emailsignup/")
                 time.sleep(5)
-                
                 print("Instagram kayıt sayfası açıldı")
-                
             except Exception as e:
-                print(f"Instagram sayfası açma hatası: {str(e)}")
-                
-                try:
-                    print("Alternatif yöntem deneniyor...")
-                    # Alternatif olarak direkt URL ile dene
-                    self.driver.get("https://www.instagram.com")
-                    time.sleep(3)
-                    
-                    # Kayıt ol linkini bul ve tıkla
-                    signup_link = self.wait_for_element(
-                        By.XPATH, 
-                        "//span[contains(text(), 'Kaydol')] | //a[contains(@href, '/accounts/emailsignup')]"
-                    )
-                    if signup_link:
-                        signup_link.click()
-                        time.sleep(3)
-                        print("Kayıt sayfasına yönlendirildi")
-                    else:
-                        raise Exception("Kayıt ol linki bulunamadı")
-                        
-                except Exception as e2:
-                    print(f"Alternatif yöntem hatası: {str(e2)}")
-                    raise
-
+                print(f"Instagram sayfası açılamadı: {str(e)}")
+                raise
+    
             # Fake bilgiler oluştur
             username = f"{self.fake.user_name()}_{random.randint(100,999)}"
             password = f"Pass_{self.fake.password(length=10)}#1"
             full_name = self.fake.name()
-
+    
             # Form doldur
             fields = {
                 'emailOrPhone': email,
@@ -142,7 +107,7 @@ class InstagramBot:
                 'username': username,
                 'password': password
             }
-
+    
             for field_name, value in fields.items():
                 field = self.wait_for_element(By.NAME, field_name)
                 if not field:
@@ -153,7 +118,7 @@ class InstagramBot:
                     field.send_keys(char)
                     time.sleep(random.uniform(0.1, 0.3))
                 time.sleep(random.uniform(0.5, 1))
-
+    
             # Kayıt ol butonuna tıkla
             submit_button = self.wait_for_element(By.XPATH, '//button[@type="submit"]', condition="clickable")
             if submit_button:
@@ -162,61 +127,133 @@ class InstagramBot:
                 time.sleep(3)
             else:
                 raise Exception("Kayıt butonu bulunamadı")
-
+    
             # Yaş doğrulama
             self.handle_age_verification()
-
-            # Temp-mail sekmesine geri dön
+    
+            # Temp-mail sekmesine geri dön ve onay kodunu al
+            print("Temp-mail sekmesine dönülüyor...")
             self.driver.switch_to.window(temp_mail_tab)
-            
-            # Onay kodunu bekle ve al
             verification_code = self.get_verification_code()
+    
             if verification_code:
                 # Instagram sekmesine geri dön
-                self.driver.switch_to.window(tabs[-1])
+                print("Instagram sekmesine dönülüyor...")
+                self.driver.switch_to.window(instagram_tab)
+                time.sleep(2)
                 
                 # Kodu gir
-                code_input = self.wait_for_element(
-                    By.XPATH, 
-                    "//input[@aria-label='Güvenlik Kodu' or @aria-label='Security Code']"
-                )
-                if code_input:
-                    for digit in verification_code:
-                        code_input.send_keys(digit)
-                        time.sleep(random.uniform(0.1, 0.3))
-                    
-                    # Onayla butonuna tıkla
-                    confirm_button = self.wait_for_element(
-                        By.XPATH, 
-                        "//button[contains(text(), 'Onayla') or contains(text(), 'Confirm')]",
-                        condition="clickable"
-                    )
-                    if confirm_button:
-                        confirm_button.click()
-                        print("Doğrulama kodu onaylandı")
-                        time.sleep(3)
+                try:
+                    # Doğrulama kodu input alanını bul
+                    code_input = self.wait_for_element(By.NAME, "email_confirmation_code")
+                    if code_input:
+                        # Input alanını temizle
+                        code_input.clear()
+                        time.sleep(0.5)
+                        
+                        # Kodu yavaşça gir
+                        for digit in verification_code:
+                            code_input.send_keys(digit)
+                            time.sleep(random.uniform(0.1, 0.3))
+                        
+                        print("Doğrulama kodu girildi")
+                        time.sleep(2)  # Biraz daha bekle
+    
+                        # İleri butonu için JavaScript yaklaşımı
+                        try:
+                            # JavaScript ile butonu bul ve tıkla
+                            js_click = """
+                            function clickNextButton() {
+                                // Tüm buton elementlerini kontrol et
+                                const elements = document.querySelectorAll('div[role="button"]');
+                                for (const el of elements) {
+                                    if (el.textContent.trim() === 'İleri') {
+                                        // Butonu görünür yap
+                                        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                                        // Tıklama olayını tetikle
+                                        el.click();
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            }
+                            return clickNextButton();
+                            """
+                            
+                            # JavaScript kodunu çalıştır
+                            result = self.driver.execute_script(js_click)
+                            if result:
+                                print("İleri butonuna JavaScript ile tıklandı")
+                                time.sleep(2)
+                            else:
+                                print("JavaScript ile tıklama başarısız, alternatif yöntem deneniyor...")
+                                
+                                # Enter tuşu ile dene
+                                code_input.send_keys(Keys.RETURN)
+                                time.sleep(1)
+                                print("Enter tuşu gönderildi")
+                                
+                                # Form submit dene
+                                self.driver.execute_script("""
+                                    const form = document.querySelector('form');
+                                    if(form) form.submit();
+                                """)
+                                time.sleep(1)
+                                print("Form submit denendi")
+                                
+                                # Son çare: Sayfayı yenile ve tekrar dene
+                                self.driver.refresh()
+                                time.sleep(5)
+                                print("Sayfa yenilendi, tekrar deneniyor...")
+                                
+                                # Yeniden JavaScript ile tıklamayı dene
+                                result = self.driver.execute_script(js_click)
+                                if result:
+                                    print("Sayfa yenileme sonrası tıklama başarılı")
+                                else:
+                                    print("Tüm tıklama denemeleri başarısız")
+                                    self.save_screenshot("ileri_butonu_hatasi")
+                        
+                        except Exception as e:
+                            print(f"İleri butonuna tıklama hatası: {str(e)}")
+                            self.save_screenshot("ileri_butonu_hatasi")
                     else:
-                        print("Onay butonu bulunamadı")
-                else:
-                    print("Kod giriş alanı bulunamadı")
-
+                        print("Kod giriş alanı bulunamadı!")
+                        self.save_screenshot("kod_input_hatasi")
+                        
+                except Exception as e:
+                    print(f"Kod girişi sırasında hata: {str(e)}")
+                    self.save_screenshot("kod_girisi_hatasi")
+    
             # Hesap bilgilerini kaydet
             self.save_account_details(email, username, password)
             return True
-
+    
         except Exception as e:
             print(f"Hesap oluşturma hatası: {str(e)}")
             self.save_screenshot("hata")
             return False
-
     def get_verification_code(self, max_attempts=30, delay=10):
         print("\nDoğrulama kodu bekleniyor...")
         
         for attempt in range(max_attempts):
             try:
-                # Sayfayı yenile
-                self.driver.refresh()
-                time.sleep(2)
+                # Yenile butonunu bul ve tıkla
+                refresh_button = self.wait_for_element(
+                    By.CSS_SELECTOR,
+                    "button[data-qa='refresh-button']",
+                    timeout=5,
+                    condition="clickable"
+                )
+                
+                if refresh_button:
+                    print("Yenileme butonu tıklanıyor...")
+                    refresh_button.click()
+                    time.sleep(2)
+                else:
+                    print("Yenileme butonu bulunamadı, sayfa yenileniyor...")
+                    self.driver.refresh()
+                    time.sleep(2)
                 
                 # Instagram mesajını ara
                 messages = self.wait.until(EC.presence_of_all_elements_located(
@@ -365,4 +402,7 @@ if __name__ == "__main__":
             print("Hesap oluşturulamadı")
         
     except Exception as e:
-        print(f"Bot hat")
+        print(f"Bot hatası: {str(e)}")
+    
+    finally:
+        input("\nÇıkmak için Enter'a basın...")
