@@ -9,13 +9,42 @@ import hashlib
 import logging
 import re
 from faker import Faker
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from PIL import Image
 from io import BytesIO
-import backoff  # New import for retries
+import backoff
 
-# Logging configuration
+# Logging configuration with UTC time
+logging.Formatter.converter = time.gmtime
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('instagram_creator.log'),
+        logging.StreamHandler()
+    ]
+)
+
+import requests
+import json
+import time
+import random
+import string
+import uuid
+import hmac
+import hashlib
+import logging
+import re
+from faker import Faker
+from datetime import datetime, timezone
+import os
+from PIL import Image
+from io import BytesIO
+import backoff
+
+# Logging configuration with UTC time
+logging.Formatter.converter = time.gmtime
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -30,76 +59,318 @@ class DropMailClient:
         self.session = requests.Session()
         self.email = None
         self.session_id = None
-        self.base_url = 'https://dropmail.me/api/graphql/web-test-2'
+        self.base_url = "https://dropmail.me/api/graphql/web-test"
+        
+        # Request headers
         self.session.headers.update({
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'Host': 'dropmail.me',
+            'Connection': 'keep-alive',
+            'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+            'accept': '*/*',
+            'content-type': 'application/json',
+            'sec-ch-ua-mobile': '?0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'sec-ch-ua-platform': '"Windows"',
+            'Origin': 'https://dropmail.me',
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Dest': 'empty',
+            'Referer': 'https://dropmail.me/',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Priority': 'u=1, i'
         })
+
+    def _make_request(self, query, variables=None):
+        """Make a GraphQL request with error handling"""
+        try:
+            payload = {'query': query}
+            if variables:
+                payload['variables'] = variables
+            
+            logging.debug(f"Making request to {self.base_url}")
+            logging.debug(f"Request payload: {json.dumps(payload, indent=2)}")
+            
+            response = self.session.post(
+                self.base_url,
+                json=payload,
+                timeout=30
+            )
+            
+            logging.debug(f"Response status: {response.status_code}")
+            logging.debug(f"Response headers: {dict(response.headers)}")
+            
+            # Check for empty response
+            if not response.content:
+                raise Exception("Empty response received")
+            
+            try:
+                response_data = response.json()
+                logging.debug(f"Response data: {json.dumps(response_data, indent=2)}")
+                return response_data
+            except json.JSONDecodeError as e:
+                logging.error(f"JSON decode error. Response content: {response.content}")
+                raise
+                
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request failed: {str(e)}")
+            raise
+        except Exception as e:
+            logging.error(f"Unexpected error: {str(e)}")
+            raise
 
     @backoff.on_exception(backoff.expo, 
                          (requests.exceptions.RequestException, json.JSONDecodeError),
-                         max_tries=3)
+                         max_tries=5,
+                         max_time=120)
     def create_inbox(self):
-        """Create a new temporary email inbox with improved error handling"""
+        """Create a new email inbox"""
         try:
             query = '''
             mutation {
                 introduceSession {
                     id
+                    expiresAt
                     addresses {
                         address
                     }
+                }
+            }
+            '''
+            
+            data = self._make_request(query)
+            
+            if 'errors' in data:
+                logging.error(f"GraphQL errors: {data['errors']}")
+                raise Exception(f"GraphQL error: {data['errors']}")
+            
+            if 'data' not in data or 'introduceSession' not in data['data']:
+                logging.error(f"Invalid response structure: {data}")
+                raise Exception("Invalid API response structure")
+            
+            session_data = data['data']['introduceSession']
+            if not session_data.get('addresses'):
+                logging.error(f"No addresses in session data: {session_data}")
+                raise Exception("No email addresses provided")
+            
+            self.session_id = session_data['id']
+            self.email = session_data['addresses'][0]['address']
+            
+            logging.info(f"Successfully created email: {self.email}")
+            logging.info(f"Session ID: {self.session_id}")
+            return self.email
+                
+        except Exception as e:
+            logging.error(f"Error creating inbox: {str(e)}")
+            raise
+
+    @backoff.on_exception(backoff.expo,
+                         (requests.exceptions.RequestException, json.JSONDecodeError),
+                         max_tries=5,
+                         max_time=180)
+    def wait_for_verification_code(self, timeout=300):
+        """Wait for and extract Instagram verification code from emails"""
+        try:
+            start_time = time.time()
+            
+            while time.time() - start_time < timeout:
+                query = '''
+                query GetMails($sessionId: ID!) {
+                    session(id: $sessionId) {
+                        mails {
+                            fromAddr
+                            text
+                            html
+                            headerSubject
+                        }
+                    }
+                }
+                '''
+                
+                variables = {'sessionId': self.session_id}
+                
+                try:
+                    data = self._make_request(query, variables)
+                    
+                    if data and 'data' in data and 'session' in data['data']:
+                        session = data['data']['session']
+                        if session and 'mails' in session:
+                            mails = session['mails']
+                            
+                            for mail in mails:
+                                content_to_check = [
+                                    mail.get('text', ''),
+                                    mail.get('html', ''),
+                                    mail.get('headerSubject', ''),
+                                    mail.get('fromAddr', '')
+                                ]
+                                
+                                for content in content_to_check:
+                                    if content and 'instagram' in content.lower():
+                                        match = re.search(r'\b\d{6}\b', content)
+                                        if match:
+                                            code = match.group(0)
+                                            logging.info(f"Found verification code: {code}")
+                                            return code
+                    
+                    time.sleep(5)
+                    
+                except Exception as e:
+                    logging.warning(f"Error checking mail: {str(e)}")
+                    time.sleep(5)
+                    continue
+            
+            logging.warning("Timeout waiting for verification code")
+            return None
+            
+        except Exception as e:
+            logging.error(f"Error in verification code check: {str(e)}")
+            return None
+
+    def check_email_validity(self):
+        """Check if the current email session is still valid"""
+        if not self.session_id:
+            return False
+            
+        try:
+            query = '''
+            query CheckSession($sessionId: ID!) {
+                session(id: $sessionId) {
+                    id
                     expiresAt
                 }
             }
             '''
             
-            response = self.session.post(
-                self.base_url,
-                json={'query': query},
-                timeout=30
-            )
+            variables = {'sessionId': self.session_id}
+            data = self._make_request(query, variables)
             
-            # Verify response status
-            response.raise_for_status()
+            return 'data' in data and 'session' in data['data'] and data['data']['session'] is not None
             
-            # Try to parse JSON response
-            try:
-                data = response.json()
-            except json.JSONDecodeError as e:
-                logging.error(f"Failed to parse JSON response: {response.text}")
-                raise
-            
-            # Validate response structure
-            if 'data' not in data or 'introduceSession' not in data['data']:
-                raise ValueError(f"Unexpected API response structure: {data}")
-            
-            session_data = data['data']['introduceSession']
-            if not session_data.get('addresses'):
-                raise ValueError("No email address in response")
-            
-            self.session_id = session_data['id']
-            self.email = session_data['addresses'][0]['address']
-            
-            logging.info(f"Successfully created new email: {self.email}")
-            return self.email
-            
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Network error creating inbox: {str(e)}")
-            raise
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            logging.error(f"Error processing API response: {str(e)}")
-            raise
-        except Exception as e:
-            logging.error(f"Unexpected error creating inbox: {str(e)}")
-            raise
+        except Exception:
+            return False
 
-    @backoff.on_exception(backoff.expo, 
+def test_dropmail():
+    """Test the DropMail functionality"""
+    logging.basicConfig(level=logging.DEBUG)
+    
+    try:
+        client = DropMailClient()
+        print("Creating new email inbox...")
+        
+        email = client.create_inbox()
+        print(f"Created email: {email}")
+        
+        if client.check_email_validity():
+            print("Email session is valid")
+        else:
+            print("Email session is invalid")
+            
+        print("\nWaiting for test mail (30 seconds timeout)...")
+        code = client.wait_for_verification_code(timeout=30)
+        
+        if code:
+            print(f"Found verification code: {code}")
+        else:
+            print("No verification code received")
+            
+        return True
+        
+    except Exception as e:
+        print(f"Test failed: {str(e)}")
+        return False
+
+if __name__ == "__main__":
+    # Set up logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    
+    # Run test
+    if test_dropmail():
+        print("DropMail test completed successfully!")
+    else:
+        print("DropMail test failed!")
+
+
+    @backoff.on_exception(backoff.expo,
                          (requests.exceptions.RequestException, json.JSONDecodeError),
-                         max_tries=5)
+                         max_tries=5,
+                         max_time=180)
     def wait_for_verification_code(self, timeout=300):
-        """Wait for Instagram verification code with improved error handling"""
+        try:
+            start_time = time.time()
+            
+            while time.time() - start_time < timeout:
+                query = '''
+                query GetSessionMails($sessionId: ID!) {
+                    session(id: $sessionId) {
+                        mails {
+                            fromAddr
+                            subject
+                            text
+                            html
+                        }
+                    }
+                }
+                '''
+                
+                # Updated request structure
+                payload = {
+                    'operationName': 'GetSessionMails',
+                    'query': query,
+                    'variables': {
+                        'sessionId': self.session_id
+                    }
+                }
+                
+                try:
+                    response = self.session.post(
+                        self.base_urls[self.current_url_index],
+                        json=payload,
+                        timeout=15
+                    )
+                    
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    if 'data' in data and 'session' in data['data']:
+                        mails = data['data']['session'].get('mails', [])
+                        
+                        for mail in mails:
+                            content_to_check = [
+                                mail.get('text', ''),
+                                mail.get('html', ''),
+                                mail.get('subject', '')
+                            ]
+                            
+                            for content in content_to_check:
+                                if content and 'instagram' in content.lower():
+                                    match = re.search(r'\b\d{6}\b', content)
+                                    if match:
+                                        code = match.group(0)
+                                        logging.info(f"Found verification code: {code}")
+                                        return code
+                    
+                    time.sleep(5)
+                    
+                except Exception as e:
+                    logging.warning(f"Error checking mail: {str(e)}")
+                    self.get_next_base_url()
+                    time.sleep(5)
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f"Error in verification code check: {str(e)}")
+            return None
+
+    @backoff.on_exception(backoff.expo,
+                         (requests.exceptions.RequestException, json.JSONDecodeError),
+                         max_tries=5,
+                         max_time=180)
+    def wait_for_verification_code(self, timeout=300):
         try:
             start_time = time.time()
             
@@ -111,7 +382,6 @@ class DropMailClient:
                             fromAddr
                             subject
                             text
-                            headerSubject
                             html
                         }
                     }
@@ -120,74 +390,58 @@ class DropMailClient:
                 
                 variables = {'sessionId': self.session_id}
                 
-                response = self.session.post(
-                    self.base_url,
-                    json={
-                        'query': query,
-                        'variables': variables
-                    },
-                    timeout=30
-                )
-                
-                response.raise_for_status()
-                data = response.json()
-                
-                if 'data' not in data or 'session' not in data['data']:
-                    logging.warning(f"Unexpected response structure: {data}")
-                    time.sleep(5)
-                    continue
-                
-                mails = data['data']['session'].get('mails', [])
-                
-                for mail in mails:
-                    # Check both HTML and text content for the verification code
-                    content_to_check = [
-                        mail.get('text', ''),
-                        mail.get('html', ''),
-                        mail.get('subject', ''),
-                        mail.get('headerSubject', '')
-                    ]
+                try:
+                    response = self.session.post(
+                        self.base_urls[self.current_url_index],
+                        json={'query': query, 'variables': variables},
+                        timeout=15
+                    )
                     
-                    for content in content_to_check:
-                        if not content:
-                            continue
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    if 'data' in data and 'session' in data['data']:
+                        mails = data['data']['session'].get('mails', [])
+                        
+                        for mail in mails:
+                            content_to_check = [
+                                mail.get('text', ''),
+                                mail.get('html', ''),
+                                mail.get('subject', '')
+                            ]
                             
-                        if 'instagram' in content.lower():
-                            # Look for 6-digit code
-                            match = re.search(r'\b\d{6}\b', content)
-                            if match:
-                                code = match.group(0)
-                                logging.info(f"Found verification code: {code}")
-                                return code
-                
-                time.sleep(5)
+                            for content in content_to_check:
+                                if content and 'instagram' in content.lower():
+                                    match = re.search(r'\b\d{6}\b', content)
+                                    if match:
+                                        return match.group(0)
+                    
+                    time.sleep(5)
+                    
+                except Exception as e:
+                    logging.warning(f"Error checking mail: {str(e)}")
+                    self.get_next_base_url()
+                    time.sleep(5)
             
-            logging.warning("Timeout waiting for verification code")
             return None
             
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Network error getting verification code: {str(e)}")
-            raise
-        except json.JSONDecodeError as e:
-            logging.error(f"Error parsing API response: {str(e)}")
-            raise
         except Exception as e:
-            logging.error(f"Unexpected error getting verification code: {str(e)}")
-            raise
+            logging.error(f"Error in verification code check: {str(e)}")
+            return None
 
 class ProxyManager:
     def __init__(self):
         self.proxies = []
         self.current_index = 0
         self.last_update = 0
-        self.update_interval = 3600  # Update proxy list every hour
+        self.update_interval = 3600
 
     def update_proxies(self):
         try:
             current_time = time.time()
             if current_time - self.last_update < self.update_interval:
                 return
-                
+            
             self.last_update = current_time
             sources = [
                 'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all',
@@ -199,14 +453,13 @@ class ProxyManager:
             for source in sources:
                 try:
                     response = requests.get(source, timeout=10)
-                    response.raise_for_status()
-                    proxies = response.text.strip().split('\n')
-                    new_proxies.update([f'http://{proxy.strip()}' for proxy in proxies if proxy.strip()])
+                    if response.status_code == 200:
+                        proxies = response.text.strip().split('\n')
+                        new_proxies.update([f'http://{proxy.strip()}' for proxy in proxies if proxy.strip()])
                 except Exception as e:
                     logging.warning(f"Failed to fetch proxies from {source}: {str(e)}")
             
             self.proxies = list(new_proxies)
-            logging.info(f"Updated proxy list. Total proxies: {len(self.proxies)}")
             
         except Exception as e:
             logging.error(f"Error updating proxies: {str(e)}")
@@ -224,7 +477,6 @@ class ProxyManager:
     def remove_proxy(self, proxy):
         if proxy in self.proxies:
             self.proxies.remove(proxy)
-            logging.info(f"Removed bad proxy. Remaining: {len(self.proxies)}")
 
 class InstagramAPI:
     def __init__(self):
@@ -239,6 +491,9 @@ class InstagramAPI:
         self.waterfall_id = self.generate_uuid()
         self.advertising_id = self.generate_uuid()
         self.android_id = self.generate_android_device_id()
+        
+        # Current UTC timestamp in milliseconds
+        self.timestamp = int(datetime.now(timezone.utc).timestamp() * 1000)
         
         self.bio_templates = [
             "🌟 {} | Hayatın tadını çıkar ✨",
@@ -313,16 +568,9 @@ class InstagramAPI:
             response.raise_for_status()
             return response.json()
             
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Request error: {str(e)}")
+        except Exception as e:
             if proxy:
                 self.proxy_manager.remove_proxy(proxy)
-            raise
-        except json.JSONDecodeError as e:
-            logging.error(f"JSON parsing error: {str(e)}")
-            raise
-        except Exception as e:
-            logging.error(f"Unexpected error in send_request: {str(e)}")
             raise
 
     def generate_random_bio(self):
@@ -353,7 +601,6 @@ class InstagramAPI:
                          max_tries=3)
     def create_account(self):
         try:
-            # Get email from DropMail with retry
             for attempt in range(3):
                 try:
                     email = self.dropmail.create_inbox()
@@ -362,15 +609,13 @@ class InstagramAPI:
                 except Exception as e:
                     if attempt == 2:
                         raise
-                    logging.warning(f"Retrying email creation after error: {str(e)}")
+                    logging.warning(f"Retrying email creation: {str(e)}")
                     time.sleep(5)
 
-            # Generate account details
             username = f"{self.fake.user_name()}_{random.randint(100,999)}"
             password = f"Pass_{self.fake.password(length=10)}#1"
             full_name = self.fake.name()
 
-            # Create account data
             account_data = {
                 'device_id': self.device_id,
                 'email': email,
@@ -385,19 +630,17 @@ class InstagramAPI:
                 'phone_id': self.phone_id,
                 'guid': self.uuid,
                 'advertising_id': self.advertising_id,
+                'device_timestamp': self.timestamp
             }
 
-            # Create account
             response = self.send_request('accounts/create/', account_data)
             if not response or 'account_created' not in response:
                 raise Exception(f"Account creation failed: {response}")
 
-            # Wait for and enter verification code
             verification_code = self.dropmail.wait_for_verification_code()
             if not verification_code:
                 raise Exception("Failed to get verification code")
 
-            # Confirm email
             confirm_data = {
                 'code': verification_code,
                 'device_id': self.device_id,
@@ -406,50 +649,62 @@ class InstagramAPI:
 
             response = self.send_request('accounts/confirm_email/', confirm_data)
             if response and response.get('status') == 'ok':
-                # Generate and set random bio
                 biography = self.generate_random_bio()
-                
-                # Update profile with bio
                 if self.update_profile(biography):
-                                        # Continuing from the create_account method
                     self.save_account(email, username, password, biography)
-                    logging.info("Account created and customized successfully!")
                     return True
-
-            raise Exception("Failed to confirm email")
+            
+            raise Exception("Account creation or customization failed")
 
         except Exception as e:
             logging.error(f"Account creation error: {str(e)}")
             return False
 
     def save_account(self, email, username, password, biography):
-        """Save created account details to a file"""
         try:
-            with open('instagram_accounts.txt', 'a', encoding='utf-8') as f:
-                f.write(f"\nRegistration Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            # UTC zaman damgası oluştur
+            current_time = datetime.now(timezone.utc)
+            
+            # Dosya adını tarihle oluştur
+            filename = f'instagram_accounts_{current_time.strftime("%Y%m%d")}.txt'
+            
+            # Hesap bilgilerini kaydet
+            with open(filename, 'a', encoding='utf-8') as f:
+                f.write(f"\n{'='*50}\n")
+                f.write(f"Registration Time (UTC): {current_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
                 f.write(f"Email: {email}\n")
                 f.write(f"Username: {username}\n")
                 f.write(f"Password: {password}\n")
                 f.write(f"Biography: {biography}\n")
-                f.write("-" * 50 + "\n")
-            logging.info("Account details saved successfully")
+                f.write(f"{'='*50}\n")
+            
+            # Ayrıca başarılı hesapları ayrı dosyada sakla
+            with open('successful_accounts.txt', 'a', encoding='utf-8') as f:
+                f.write(f"{username}:{password}:{email}\n")
+                
+            logging.info(f"Account details saved successfully to {filename}")
+            
         except Exception as e:
             logging.error(f"Error saving account details: {str(e)}")
             raise
 
 def main():
-    """Main execution function with retry logic"""
+    """Main execution function with improved retry logic and error handling"""
     logging.info("Starting Instagram Account Creator...")
     
     max_attempts = 3
     attempt = 0
+    wait_time_base = 10
     
     while attempt < max_attempts:
         try:
             attempt += 1
             logging.info(f"Attempt {attempt} of {max_attempts}")
             
+            # Instagram API instance oluştur
             api = InstagramAPI()
+            
+            # Hesap oluşturma işlemini başlat
             success = api.create_account()
             
             if success:
@@ -457,22 +712,57 @@ def main():
                 break
             else:
                 if attempt < max_attempts:
-                    wait_time = 30 * attempt  # Increasing wait time between attempts
+                    wait_time = wait_time_base * (2 ** (attempt - 1))  # Exponential backoff
                     logging.info(f"Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
                 else:
                     logging.error("Maximum attempts reached. Failed to create account")
-                    
+        
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Network error in attempt {attempt}: {str(e)}")
+            if attempt < max_attempts:
+                wait_time = wait_time_base * (2 ** (attempt - 1))
+                logging.info(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+                
+        except json.JSONDecodeError as e:
+            logging.error(f"JSON parsing error in attempt {attempt}: {str(e)}")
+            if attempt < max_attempts:
+                wait_time = wait_time_base * (2 ** (attempt - 1))
+                logging.info(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+                
         except Exception as e:
             logging.error(f"Unexpected error in attempt {attempt}: {str(e)}")
             if attempt < max_attempts:
-                wait_time = 30 * attempt
+                wait_time = wait_time_base * (2 ** (attempt - 1))
                 logging.info(f"Retrying in {wait_time} seconds...")
                 time.sleep(wait_time)
             else:
                 logging.error("Maximum attempts reached. Terminating program")
+                break
     
     logging.info("Program terminated")
 
 if __name__ == "__main__":
-    main()
+    try:
+        # Set process title if possible
+        try:
+            import setproctitle
+            setproctitle.setproctitle('instagram_bot')
+        except ImportError:
+            pass
+        
+        # Create logs directory if it doesn't exist
+        if not os.path.exists('logs'):
+            os.makedirs('logs')
+        
+        # Start the main process
+        main()
+        
+    except KeyboardInterrupt:
+        logging.info("Program terminated by user")
+        sys.exit(0)
+    except Exception as e:
+        logging.critical(f"Critical error: {str(e)}")
+        sys.exit(1)
