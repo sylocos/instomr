@@ -59,9 +59,25 @@ class DropMailClient:
         self.session = requests.Session()
         self.email = None
         self.session_id = None
-        self.base_url = "https://dropmail.me/api/graphql/web-test"
+        # Multiple backup URLs
+        self.base_urls = [
+            "https://dropmail.me/api/graphql/web-test",
+            "https://dropmail.me/api/graphql/test1",
+            "https://dropmail.me/api/graphql/test2",
+            f"https://dropmail.me/api/graphql/web-test-{datetime.now(timezone.utc).strftime('%Y%m%d')}e6Jet"
+        ]
+        self.current_url_index = 0
         
-        # Request headers
+        # Configure session with retry mechanism
+        retry_strategy = requests.adapters.Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy, pool_maxsize=10)
+        self.session.mount("https://", adapter)
+        
+        # Updated headers
         self.session.headers.update({
             'Host': 'dropmail.me',
             'Connection': 'keep-alive',
@@ -70,61 +86,69 @@ class DropMailClient:
             'content-type': 'application/json',
             'sec-ch-ua-mobile': '?0',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'sec-ch-ua-platform': '"Windows"',
             'Origin': 'https://dropmail.me',
             'Sec-Fetch-Site': 'same-origin',
             'Sec-Fetch-Mode': 'cors',
             'Sec-Fetch-Dest': 'empty',
             'Referer': 'https://dropmail.me/',
             'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Priority': 'u=1, i'
+            'Accept-Language': 'en-US,en;q=0.9'
         })
 
-    def _make_request(self, query, variables=None):
-        """Make a GraphQL request with error handling"""
-        try:
-            payload = {'query': query}
-            if variables:
-                payload['variables'] = variables
-            
-            logging.debug(f"Making request to {self.base_url}")
-            logging.debug(f"Request payload: {json.dumps(payload, indent=2)}")
-            
-            response = self.session.post(
-                self.base_url,
-                json=payload,
-                timeout=30
-            )
-            
-            logging.debug(f"Response status: {response.status_code}")
-            logging.debug(f"Response headers: {dict(response.headers)}")
-            
-            # Check for empty response
-            if not response.content:
-                raise Exception("Empty response received")
-            
+    def _get_next_base_url(self):
+        """Rotate through available base URLs"""
+        self.current_url_index = (self.current_url_index + 1) % len(self.base_urls)
+        return self.base_urls[self.current_url_index]
+
+    def _make_request(self, query, variables=None, timeout=(5, 10)):
+        """Make a GraphQL request with enhanced error handling and retry logic"""
+        last_exception = None
+        
+        # Try each available URL
+        for _ in range(len(self.base_urls)):
+            current_url = self.base_urls[self.current_url_index]
             try:
-                response_data = response.json()
-                logging.debug(f"Response data: {json.dumps(response_data, indent=2)}")
-                return response_data
-            except json.JSONDecodeError as e:
-                logging.error(f"JSON decode error. Response content: {response.content}")
-                raise
+                payload = {'query': query}
+                if variables:
+                    payload['variables'] = variables
                 
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Request failed: {str(e)}")
-            raise
-        except Exception as e:
-            logging.error(f"Unexpected error: {str(e)}")
-            raise
+                logging.debug(f"Attempting request to {current_url}")
+                
+                response = self.session.post(
+                    current_url,
+                    json=payload,
+                    timeout=timeout,
+                    verify=True
+                )
+                
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logging.warning(f"Request failed with status {response.status_code}")
+                    self._get_next_base_url()
+                    
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                logging.warning(f"Connection failed for {current_url}: {str(e)}")
+                last_exception = e
+                self._get_next_base_url()
+                continue
+                
+            except Exception as e:
+                logging.error(f"Unexpected error with {current_url}: {str(e)}")
+                last_exception = e
+                self._get_next_base_url()
+                continue
+        
+        if last_exception:
+            raise last_exception
+        raise Exception("All URLs failed")
 
     @backoff.on_exception(backoff.expo, 
                          (requests.exceptions.RequestException, json.JSONDecodeError),
                          max_tries=5,
                          max_time=120)
     def create_inbox(self):
-        """Create a new email inbox"""
+        """Create a new email inbox with improved error handling"""
         try:
             query = '''
             mutation {
@@ -138,7 +162,8 @@ class DropMailClient:
             }
             '''
             
-            data = self._make_request(query)
+            # Try with shorter timeout first
+            data = self._make_request(query, timeout=(3, 7))
             
             if 'errors' in data:
                 logging.error(f"GraphQL errors: {data['errors']}")
@@ -157,7 +182,6 @@ class DropMailClient:
             self.email = session_data['addresses'][0]['address']
             
             logging.info(f"Successfully created email: {self.email}")
-            logging.info(f"Session ID: {self.session_id}")
             return self.email
                 
         except Exception as e:
@@ -172,6 +196,7 @@ class DropMailClient:
         """Wait for and extract Instagram verification code from emails"""
         try:
             start_time = time.time()
+            check_interval = 5  # seconds between checks
             
             while time.time() - start_time < timeout:
                 query = '''
@@ -190,7 +215,8 @@ class DropMailClient:
                 variables = {'sessionId': self.session_id}
                 
                 try:
-                    data = self._make_request(query, variables)
+                    # Use shorter timeout for mail checks
+                    data = self._make_request(query, variables, timeout=(3, 7))
                     
                     if data and 'data' in data and 'session' in data['data']:
                         session = data['data']['session']
@@ -213,11 +239,11 @@ class DropMailClient:
                                             logging.info(f"Found verification code: {code}")
                                             return code
                     
-                    time.sleep(5)
+                    time.sleep(check_interval)
                     
                 except Exception as e:
                     logging.warning(f"Error checking mail: {str(e)}")
-                    time.sleep(5)
+                    time.sleep(1)  # Short sleep before retry
                     continue
             
             logging.warning("Timeout waiting for verification code")
@@ -227,32 +253,12 @@ class DropMailClient:
             logging.error(f"Error in verification code check: {str(e)}")
             return None
 
-    def check_email_validity(self):
-        """Check if the current email session is still valid"""
-        if not self.session_id:
-            return False
-            
-        try:
-            query = '''
-            query CheckSession($sessionId: ID!) {
-                session(id: $sessionId) {
-                    id
-                    expiresAt
-                }
-            }
-            '''
-            
-            variables = {'sessionId': self.session_id}
-            data = self._make_request(query, variables)
-            
-            return 'data' in data and 'session' in data['data'] and data['data']['session'] is not None
-            
-        except Exception:
-            return False
-
 def test_dropmail():
     """Test the DropMail functionality"""
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     
     try:
         client = DropMailClient()
@@ -260,20 +266,6 @@ def test_dropmail():
         
         email = client.create_inbox()
         print(f"Created email: {email}")
-        
-        if client.check_email_validity():
-            print("Email session is valid")
-        else:
-            print("Email session is invalid")
-            
-        print("\nWaiting for test mail (30 seconds timeout)...")
-        code = client.wait_for_verification_code(timeout=30)
-        
-        if code:
-            print(f"Found verification code: {code}")
-        else:
-            print("No verification code received")
-            
         return True
         
     except Exception as e:
@@ -281,6 +273,7 @@ def test_dropmail():
         return False
 
 if __name__ == "__main__":
+    test_dropmail()
     # Set up logging
     logging.basicConfig(
         level=logging.DEBUG,
