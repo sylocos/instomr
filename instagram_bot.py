@@ -14,35 +14,8 @@ import os
 from PIL import Image
 from io import BytesIO
 import backoff
-
-# Logging configuration with UTC time
-logging.Formatter.converter = time.gmtime
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('instagram_creator.log'),
-        logging.StreamHandler()
-    ]
-)
-
-import requests
-import json
-import time
-import random
-import string
-import uuid
-import hmac
-import hashlib
-import logging
-import re
-from faker import Faker
-from datetime import datetime, timezone
-import os
-from PIL import Image
-from io import BytesIO
-import backoff
-
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Logging configuration with UTC time
 logging.Formatter.converter = time.gmtime
 logging.basicConfig(
@@ -59,11 +32,10 @@ class DropMailClient:
         self.session = requests.Session()
         self.email = None
         self.session_id = None
-        # Multiple backup URLs
+        # API endpoints
         self.base_urls = [
-            "https://dropmail.me/api/graphql/web-test",
-            "https://dropmail.me/api/graphql/test1",
-            "https://dropmail.me/api/graphql/test2",
+            'https://dropmail.me/api/graphql/web-test-2',
+            'https://dropmail.me/api/graphql/web-test',
             f"https://dropmail.me/api/graphql/web-test-{datetime.now(timezone.utc).strftime('%Y%m%d')}e6Jet"
         ]
         self.current_url_index = 0
@@ -77,22 +49,17 @@ class DropMailClient:
         adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy, pool_maxsize=10)
         self.session.mount("https://", adapter)
         
-        # Updated headers
+        # Headers
         self.session.headers.update({
             'Host': 'dropmail.me',
             'Connection': 'keep-alive',
-            'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-            'accept': '*/*',
-            'content-type': 'application/json',
-            'sec-ch-ua-mobile': '?0',
+            'Content-Type': 'application/json',
+            'Accept': '*/*',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Origin': 'https://dropmail.me',
-            'Sec-Fetch-Site': 'same-origin',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Dest': 'empty',
             'Referer': 'https://dropmail.me/',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-US,en;q=0.9'
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br'
         })
 
     def _get_next_base_url(self):
@@ -100,107 +67,59 @@ class DropMailClient:
         self.current_url_index = (self.current_url_index + 1) % len(self.base_urls)
         return self.base_urls[self.current_url_index]
 
-    def _make_request(self, query, variables=None, timeout=(5, 10)):
-        """Make a GraphQL request with enhanced error handling and retry logic"""
-        last_exception = None
-        
-        # Try each available URL
-        for _ in range(len(self.base_urls)):
-            current_url = self.base_urls[self.current_url_index]
-            try:
-                payload = {'query': query}
-                if variables:
-                    payload['variables'] = variables
-                
-                logging.debug(f"Attempting request to {current_url}")
-                
-                response = self.session.post(
-                    current_url,
-                    json=payload,
-                    timeout=timeout,
-                    verify=True
-                )
-                
-                if response.status_code == 200:
-                    return response.json()
-                else:
-                    logging.warning(f"Request failed with status {response.status_code}")
-                    self._get_next_base_url()
-                    
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                logging.warning(f"Connection failed for {current_url}: {str(e)}")
-                last_exception = e
-                self._get_next_base_url()
-                continue
-                
-            except Exception as e:
-                logging.error(f"Unexpected error with {current_url}: {str(e)}")
-                last_exception = e
-                self._get_next_base_url()
-                continue
-        
-        if last_exception:
-            raise last_exception
-        raise Exception("All URLs failed")
-
-    @backoff.on_exception(backoff.expo, 
-                         (requests.exceptions.RequestException, json.JSONDecodeError),
-                         max_tries=5,
-                         max_time=120)
     def create_inbox(self):
-        """Create a new email inbox with improved error handling"""
+        """Create a new temporary email inbox"""
         try:
             query = '''
             mutation {
                 introduceSession {
                     id
-                    expiresAt
                     addresses {
                         address
                     }
+                    expiresAt
                 }
             }
             '''
             
-            # Try with shorter timeout first
-            data = self._make_request(query, timeout=(3, 7))
+            # Try each URL until one works
+            for _ in range(len(self.base_urls)):
+                try:
+                    response = self.session.post(
+                        self.base_urls[self.current_url_index],
+                        json={'query': query},
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'data' in data and 'introduceSession' in data['data']:
+                            self.session_id = data['data']['introduceSession']['id']
+                            self.email = data['data']['introduceSession']['addresses'][0]['address']
+                            logging.info(f"Successfully created email: {self.email}")
+                            return self.email
+                    
+                    self._get_next_base_url()
+                    
+                except Exception as e:
+                    logging.warning(f"Error with endpoint {self.base_urls[self.current_url_index]}: {str(e)}")
+                    self._get_next_base_url()
+                    continue
             
-            if 'errors' in data:
-                logging.error(f"GraphQL errors: {data['errors']}")
-                raise Exception(f"GraphQL error: {data['errors']}")
+            raise Exception("All endpoints failed")
             
-            if 'data' not in data or 'introduceSession' not in data['data']:
-                logging.error(f"Invalid response structure: {data}")
-                raise Exception("Invalid API response structure")
-            
-            session_data = data['data']['introduceSession']
-            if not session_data.get('addresses'):
-                logging.error(f"No addresses in session data: {session_data}")
-                raise Exception("No email addresses provided")
-            
-            self.session_id = session_data['id']
-            self.email = session_data['addresses'][0]['address']
-            
-            logging.info(f"Successfully created email: {self.email}")
-            return self.email
-                
         except Exception as e:
             logging.error(f"Error creating inbox: {str(e)}")
-            raise
+            return None
 
-    @backoff.on_exception(backoff.expo,
-                         (requests.exceptions.RequestException, json.JSONDecodeError),
-                         max_tries=5,
-                         max_time=180)
     def wait_for_verification_code(self, timeout=300):
-        """Wait for and extract Instagram verification code from emails"""
+        """Wait for Instagram verification code"""
         try:
             start_time = time.time()
-            check_interval = 5  # seconds between checks
             
             while time.time() - start_time < timeout:
                 query = '''
-                query GetMails($sessionId: ID!) {
+                query($sessionId: ID!) {
                     session(id: $sessionId) {
                         mails {
                             fromAddr
@@ -215,13 +134,19 @@ class DropMailClient:
                 variables = {'sessionId': self.session_id}
                 
                 try:
-                    # Use shorter timeout for mail checks
-                    data = self._make_request(query, variables, timeout=(3, 7))
+                    response = self.session.post(
+                        self.base_urls[self.current_url_index],
+                        json={
+                            'query': query,
+                            'variables': variables
+                        },
+                        timeout=15
+                    )
                     
-                    if data and 'data' in data and 'session' in data['data']:
-                        session = data['data']['session']
-                        if session and 'mails' in session:
-                            mails = session['mails']
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'data' in data and 'session' in data['data']:
+                            mails = data['data']['session'].get('mails', [])
                             
                             for mail in mails:
                                 content_to_check = [
@@ -239,11 +164,12 @@ class DropMailClient:
                                             logging.info(f"Found verification code: {code}")
                                             return code
                     
-                    time.sleep(check_interval)
+                    time.sleep(5)
                     
                 except Exception as e:
                     logging.warning(f"Error checking mail: {str(e)}")
-                    time.sleep(1)  # Short sleep before retry
+                    self._get_next_base_url()
+                    time.sleep(5)
                     continue
             
             logging.warning("Timeout waiting for verification code")
@@ -252,225 +178,120 @@ class DropMailClient:
         except Exception as e:
             logging.error(f"Error in verification code check: {str(e)}")
             return None
-
-def test_dropmail():
-    """Test the DropMail functionality"""
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    
-    try:
-        client = DropMailClient()
-        print("Creating new email inbox...")
-        
-        email = client.create_inbox()
-        print(f"Created email: {email}")
-        return True
-        
-    except Exception as e:
-        print(f"Test failed: {str(e)}")
-        return False
-
-if __name__ == "__main__":
-    test_dropmail()
-    # Set up logging
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    
-    # Run test
-    if test_dropmail():
-        print("DropMail test completed successfully!")
-    else:
-        print("DropMail test failed!")
-
-
-    @backoff.on_exception(backoff.expo,
-                         (requests.exceptions.RequestException, json.JSONDecodeError),
-                         max_tries=5,
-                         max_time=180)
-    def wait_for_verification_code(self, timeout=300):
-        try:
-            start_time = time.time()
-            
-            while time.time() - start_time < timeout:
-                query = '''
-                query GetSessionMails($sessionId: ID!) {
-                    session(id: $sessionId) {
-                        mails {
-                            fromAddr
-                            subject
-                            text
-                            html
-                        }
-                    }
-                }
-                '''
-                
-                # Updated request structure
-                payload = {
-                    'operationName': 'GetSessionMails',
-                    'query': query,
-                    'variables': {
-                        'sessionId': self.session_id
-                    }
-                }
-                
-                try:
-                    response = self.session.post(
-                        self.base_urls[self.current_url_index],
-                        json=payload,
-                        timeout=15
-                    )
-                    
-                    response.raise_for_status()
-                    data = response.json()
-                    
-                    if 'data' in data and 'session' in data['data']:
-                        mails = data['data']['session'].get('mails', [])
-                        
-                        for mail in mails:
-                            content_to_check = [
-                                mail.get('text', ''),
-                                mail.get('html', ''),
-                                mail.get('subject', '')
-                            ]
-                            
-                            for content in content_to_check:
-                                if content and 'instagram' in content.lower():
-                                    match = re.search(r'\b\d{6}\b', content)
-                                    if match:
-                                        code = match.group(0)
-                                        logging.info(f"Found verification code: {code}")
-                                        return code
-                    
-                    time.sleep(5)
-                    
-                except Exception as e:
-                    logging.warning(f"Error checking mail: {str(e)}")
-                    self.get_next_base_url()
-                    time.sleep(5)
-            
-            return None
-            
-        except Exception as e:
-            logging.error(f"Error in verification code check: {str(e)}")
-            return None
-
-    @backoff.on_exception(backoff.expo,
-                         (requests.exceptions.RequestException, json.JSONDecodeError),
-                         max_tries=5,
-                         max_time=180)
-    def wait_for_verification_code(self, timeout=300):
-        try:
-            start_time = time.time()
-            
-            while time.time() - start_time < timeout:
-                query = '''
-                query($sessionId: ID!) {
-                    session(id: $sessionId) {
-                        mails {
-                            fromAddr
-                            subject
-                            text
-                            html
-                        }
-                    }
-                }
-                '''
-                
-                variables = {'sessionId': self.session_id}
-                
-                try:
-                    response = self.session.post(
-                        self.base_urls[self.current_url_index],
-                        json={'query': query, 'variables': variables},
-                        timeout=15
-                    )
-                    
-                    response.raise_for_status()
-                    data = response.json()
-                    
-                    if 'data' in data and 'session' in data['data']:
-                        mails = data['data']['session'].get('mails', [])
-                        
-                        for mail in mails:
-                            content_to_check = [
-                                mail.get('text', ''),
-                                mail.get('html', ''),
-                                mail.get('subject', '')
-                            ]
-                            
-                            for content in content_to_check:
-                                if content and 'instagram' in content.lower():
-                                    match = re.search(r'\b\d{6}\b', content)
-                                    if match:
-                                        return match.group(0)
-                    
-                    time.sleep(5)
-                    
-                except Exception as e:
-                    logging.warning(f"Error checking mail: {str(e)}")
-                    self.get_next_base_url()
-                    time.sleep(5)
-            
-            return None
-            
-        except Exception as e:
-            logging.error(f"Error in verification code check: {str(e)}")
-            return None
-
 class ProxyManager:
     def __init__(self):
-        self.proxies = []
+        self.working_proxies = []
         self.current_index = 0
         self.last_update = 0
-        self.update_interval = 3600
+        self.update_interval = 180
+        self.min_working_proxies = 5
+        
+        # Güvenilir ve ücretsiz proxy listesi
+        self.base_proxies = [
+            'http://51.159.115.233:3128',
+            'http://163.172.31.44:80',
+            'http://51.158.154.73:3128',
+            'http://195.154.255.118:3128',
+            'http://51.158.68.133:8811',
+            'http://51.158.172.165:8811',
+            'http://163.172.157.142:3128',
+            'http://51.15.242.202:3128',
+            'http://51.15.242.202:8080',
+            'http://51.158.172.165:8761',
+            'http://149.202.181.48:5566',
+            'http://51.158.172.165:8089',
+            'http://51.158.98.121:8811',
+            'http://163.172.189.32:8811',
+            'http://178.32.129.31:3128',
+            'http://151.80.196.163:8811',
+            'http://151.80.196.163:8118',
+            'http://163.172.157.142:8089',
+            'http://51.158.68.68:8761',
+            'http://51.158.106.54:8811'
+        ]
 
     def update_proxies(self):
+        """Update working proxy list"""
         try:
-            current_time = time.time()
-            if current_time - self.last_update < self.update_interval:
+            if time.time() - self.last_update < self.update_interval and len(self.working_proxies) >= self.min_working_proxies:
                 return
-            
-            self.last_update = current_time
-            sources = [
-                'https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all',
-                'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-                'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt'
-            ]
-            
-            new_proxies = set()
-            for source in sources:
-                try:
-                    response = requests.get(source, timeout=10)
-                    if response.status_code == 200:
-                        proxies = response.text.strip().split('\n')
-                        new_proxies.update([f'http://{proxy.strip()}' for proxy in proxies if proxy.strip()])
-                except Exception as e:
-                    logging.warning(f"Failed to fetch proxies from {source}: {str(e)}")
-            
-            self.proxies = list(new_proxies)
-            
+
+            self.last_update = time.time()
+            self.working_proxies = []
+
+            # Test base proxies
+            for proxy in self.base_proxies:
+                if self.test_proxy(proxy):
+                    self.working_proxies.append(proxy)
+                    if len(self.working_proxies) >= 10:  # En az 10 çalışan proxy bul
+                        break
+
+            if self.working_proxies:
+                logging.info(f"Updated proxy list. Working proxies: {len(self.working_proxies)}")
+            else:
+                logging.warning("No working proxies found!")
+
         except Exception as e:
             logging.error(f"Error updating proxies: {str(e)}")
 
+    def test_proxy(self, proxy):
+        """Test single proxy"""
+        try:
+            session = requests.Session()
+            session.verify = False
+            session.headers.update({
+                'User-Agent': 'Instagram 269.0.0.18.75 Android',
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            })
+
+            # Test URLs
+            test_urls = [
+                'https://www.instagram.com/',
+                'https://i.instagram.com/api/v1/si/fetch_headers/'
+            ]
+
+            for url in test_urls:
+                try:
+                    response = session.get(
+                        url,
+                        proxies={'http': proxy, 'https': proxy},
+                        timeout=5
+                    )
+                    if response.status_code < 400:
+                        return True
+                except:
+                    continue
+
+            return False
+            
+        except:
+            return False
+
     def get_proxy(self):
-        if not self.proxies or time.time() - self.last_update >= self.update_interval:
+        """Get a working proxy"""
+        if len(self.working_proxies) < self.min_working_proxies:
             self.update_proxies()
-        if not self.proxies:
+        
+        if not self.working_proxies:
             return None
         
-        proxy = self.proxies[self.current_index]
-        self.current_index = (self.current_index + 1) % len(self.proxies)
-        return proxy
+        # Rastgele proxy seç
+        return random.choice(self.working_proxies)
 
     def remove_proxy(self, proxy):
-        if proxy in self.proxies:
-            self.proxies.remove(proxy)
-
+        """Remove failed proxy"""
+        if proxy in self.working_proxies:
+            self.working_proxies.remove(proxy)
+            logging.info(f"Removed bad proxy. Remaining working proxies: {len(self.working_proxies)}")
+        
+        if len(self.working_proxies) < self.min_working_proxies:
+            self.update_proxies()
+    def get_random_proxy(self):
+        """Get a random working proxy"""
+        if len(self.working_proxies) < self.min_working_proxies:
+            self.update_proxies()
+        return random.choice(self.working_proxies) if self.working_proxies else None
 class InstagramAPI:
     def __init__(self):
         self.session = requests.Session()
@@ -538,34 +359,84 @@ class InstagramAPI:
                          max_tries=3)
     def send_request(self, endpoint, data=None, params=None):
         url = f'https://i.instagram.com/api/v1/{endpoint}'
-        proxy = self.proxy_manager.get_proxy()
+        max_retries = 5
+        retry_count = 0
+        retry_delay = 3
         
-        try:
-            if data:
-                json_data = json.dumps(data)
-                signature = self.generate_signature(json_data)
+        while retry_count < max_retries:
+            proxy = self.proxy_manager.get_proxy()
+            if not proxy:
+                logging.warning("No working proxies available. Waiting...")
+                time.sleep(retry_delay)
+                retry_count += 1
+                continue
                 
-                params = {
-                    'ig_sig_key_version': '4',
-                    'signed_body': f'{signature}.{json_data}'
+            try:
+                # Request data preparation
+                if data:
+                    data['device_timestamp'] = str(int(time.time() * 1000))
+                    json_data = json.dumps(data)
+                    signature = self.generate_signature(json_data)
+                    params = {
+                        'ig_sig_key_version': '4',
+                        'signed_body': f'{signature}.{json_data}'
+                    }
+                
+                # Setup session
+                session = requests.Session()
+                session.verify = False
+                session.headers.update(self.headers)
+                
+                # Additional headers
+                extra_headers = {
+                    'Connection': 'keep-alive',
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-IG-Connection-Speed': f'{random.randint(1000, 3000)}kbps',
+                    'X-IG-Bandwidth-Speed-KBPS': '-1.000',
+                    'X-IG-Bandwidth-TotalBytes-B': '0',
+                    'X-IG-Bandwidth-TotalTime-MS': '0',
                 }
-            
-            response = self.session.post(
-                url,
-                data=data,
-                params=params,
-                proxies={'http': proxy, 'https': proxy} if proxy else None,
-                timeout=30
-            )
-            
-            response.raise_for_status()
-            return response.json()
-            
-        except Exception as e:
-            if proxy:
+                session.headers.update(extra_headers)
+                
+                # Make request
+                response = session.post(
+                    url,
+                    data=data,
+                    params=params,
+                    proxies={'http': proxy, 'https': proxy},
+                    timeout=15
+                )
+                
+                if response.status_code == 200:
+                    try:
+                        json_response = response.json()
+                        if 'status' in json_response and json_response['status'] == 'fail':
+                            if 'message' in json_response:
+                                logging.warning(f"Instagram error: {json_response['message']}")
+                            self.proxy_manager.remove_proxy(proxy)
+                            continue
+                        return json_response
+                    except json.JSONDecodeError:
+                        logging.warning(f"Invalid JSON response: {response.text[:100]}")
+                        self.proxy_manager.remove_proxy(proxy)
+                elif response.status_code == 429:
+                    logging.warning("Rate limited. Waiting...")
+                    time.sleep(30)
+                    continue
+                else:
+                    logging.warning(f"Request failed with status {response.status_code}")
+                    self.proxy_manager.remove_proxy(proxy)
+                    
+            except requests.exceptions.RequestException as e:
+                logging.warning(f"Request error with proxy {proxy}: {str(e)}")
                 self.proxy_manager.remove_proxy(proxy)
-            raise
-
+            except Exception as e:
+                logging.error(f"Unexpected error: {str(e)}")
+            
+            retry_count += 1
+            time.sleep(retry_delay)
+        
+        raise Exception(f"Failed to send request to {endpoint} after {max_retries} attempts")
     def generate_random_bio(self):
         template = random.choice(self.bio_templates)
         words = [self.fake.word() for _ in range(2)]
@@ -593,66 +464,81 @@ class InstagramAPI:
                          Exception,
                          max_tries=3)
     def create_account(self):
-        try:
-            for attempt in range(3):
-                try:
-                    email = self.dropmail.create_inbox()
-                    if email:
-                        break
-                except Exception as e:
-                    if attempt == 2:
-                        raise
-                    logging.warning(f"Retrying email creation: {str(e)}")
-                    time.sleep(5)
-
-            username = f"{self.fake.user_name()}_{random.randint(100,999)}"
-            password = f"Pass_{self.fake.password(length=10)}#1"
-            full_name = self.fake.name()
-
-            account_data = {
-                'device_id': self.device_id,
-                'email': email,
-                'username': username,
-                'password': password,
-                'first_name': full_name,
-                'client_id': self.device_id,
-                'seamless_login_enabled': '1',
-                'force_sign_up_code': '',
-                'waterfall_id': self.waterfall_id,
-                'qs_stamp': '',
-                'phone_id': self.phone_id,
-                'guid': self.uuid,
-                'advertising_id': self.advertising_id,
-                'device_timestamp': self.timestamp
-            }
-
-            response = self.send_request('accounts/create/', account_data)
-            if not response or 'account_created' not in response:
-                raise Exception(f"Account creation failed: {response}")
-
-            verification_code = self.dropmail.wait_for_verification_code()
-            if not verification_code:
-                raise Exception("Failed to get verification code")
-
-            confirm_data = {
-                'code': verification_code,
-                'device_id': self.device_id,
-                'email': email,
-            }
-
-            response = self.send_request('accounts/confirm_email/', confirm_data)
-            if response and response.get('status') == 'ok':
-                biography = self.generate_random_bio()
-                if self.update_profile(biography):
-                    self.save_account(email, username, password, biography)
-                    return True
-            
-            raise Exception("Account creation or customization failed")
-
-        except Exception as e:
-            logging.error(f"Account creation error: {str(e)}")
-            return False
-
+        max_attempts = 3
+        current_attempt = 0
+        
+        while current_attempt < max_attempts:
+            try:
+                # Get email from DropMail
+                email = self.dropmail.create_inbox()
+                if not email:
+                    raise Exception("Failed to create email inbox")
+    
+                # Generate account details
+                username = f"{self.fake.user_name()}_{random.randint(100,999)}"
+                password = f"Pass_{self.fake.password(length=10)}#1"
+                full_name = self.fake.name()
+    
+                # Account data
+                account_data = {
+                    'device_id': self.device_id,
+                    'email': email,
+                    'username': username,
+                    'password': password,
+                    'first_name': full_name,
+                    'client_id': self.device_id,
+                    'seamless_login_enabled': '1',
+                    'force_sign_up_code': '',
+                    'waterfall_id': self.waterfall_id,
+                    'qs_stamp': '',
+                    'phone_id': self.phone_id,
+                    'guid': self.uuid,
+                    'advertising_id': self.advertising_id,
+                }
+    
+                # Create account
+                response = self.send_request('accounts/create/', account_data)
+                
+                if not response:
+                    raise Exception("No response from Instagram")
+                    
+                if 'account_created' not in response:
+                    error_msg = response.get('message', 'Unknown error')
+                    raise Exception(f"Account creation failed: {error_msg}")
+    
+                # Wait for verification code
+                verification_code = self.dropmail.wait_for_verification_code()
+                if not verification_code:
+                    raise Exception("Failed to get verification code")
+    
+                # Confirm email
+                confirm_data = {
+                    'code': verification_code,
+                    'device_id': self.device_id,
+                    'email': email,
+                }
+    
+                response = self.send_request('accounts/confirm_email/', confirm_data)
+                if response and response.get('status') == 'ok':
+                    # Update profile
+                    biography = self.generate_random_bio()
+                    if self.update_profile(biography):
+                        self.save_account(email, username, password, biography)
+                        logging.info("Account created and customized successfully!")
+                        return True
+                
+                raise Exception("Account creation or customization failed")
+    
+            except Exception as e:
+                logging.error(f"Account creation error: {str(e)}")
+                current_attempt += 1
+                if current_attempt < max_attempts:
+                    wait_time = 10
+                    logging.info(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                
+        return False
+    
     def save_account(self, email, username, password, biography):
         try:
             # UTC zaman damgası oluştur
