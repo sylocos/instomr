@@ -315,33 +315,64 @@ class InstagramAPI:
             try:
                 if data:
                     # Temel veriyi hazırla
-                    data.update({
+                    device_data = {
                         'device_id': self.device_id,
                         '_uuid': self.uuid,
                         '_uid': self.device_id,
                         'guid': self.uuid,
                         'phone_id': self.phone_id,
                         '_csrftoken': 'missing',
-                        'device_timestamp': str(int(time.time()))
-                    })
+                        'device_timestamp': str(int(time.time() * 1000))
+                    }
+                    data.update(device_data)
                     
-                    # JSON string oluştur ve imzala
+                    # JSON string oluştur
                     json_data = json.dumps(data)
+                    
+                    # İmza oluştur
                     signature = self.generate_signature(json_data)
                     
-                    # POST verisi hazırla
-                    signed_body = f'{signature}.{json_data}'
-                    post_data = {
-                        'signed_body': signed_body,
+                    # Form verisi hazırla
+                    form_data = {
+                        'signed_body': f'{signature}.{json_data}',
                         'ig_sig_key_version': self.sig_key_version
                     }
                 else:
-                    post_data = None
-                
+                    form_data = None
+    
                 # Session oluştur
                 session = requests.Session()
-                session.headers.update(self.headers)
                 session.verify = False
+                
+                # Güncellenmiş headers
+                current_time = int(time.time())
+                request_headers = {
+                    'User-Agent': f"Instagram {self.device_settings['app_version']} Android ({self.device_settings['android_version']}/{self.device_settings['android_release']}; {self.device_settings['dpi']}dpi; {self.device_settings['resolution']}; {self.device_settings['manufacturer']}; {self.device_settings['device']}; {self.device_settings['model']}; {self.device_settings['cpu']}; tr_TR; {self.device_settings['version_code']})",
+                    'Accept-Language': 'tr-TR',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'X-IG-Capabilities': '3brTvw==',
+                    'X-IG-Connection-Type': 'WIFI',
+                    'X-IG-App-ID': '936619743392459',
+                    'X-IG-Device-ID': self.device_id,
+                    'X-IG-Android-ID': self.android_id,
+                    'IG-U-DS-USER-ID': '0',
+                    'IG-U-RUR': '',
+                    'IG-INTENDED-USER-ID': '0',
+                    'X-MID': '',
+                    'X-Pigeon-Session-Id': self.generate_uuid(),
+                    'X-Pigeon-Rawclienttime': str(current_time),
+                    'X-IG-Connection-Speed': '-1kbps',
+                    'X-IG-Bandwidth-Speed-KBPS': '-1.000',
+                    'X-IG-Bandwidth-TotalBytes-B': '0',
+                    'X-IG-Bandwidth-TotalTime-MS': '0',
+                    'X-FB-HTTP-Engine': 'Liger',
+                    'X-FB-Client-IP': 'True',
+                    'X-FB-Server-Cluster': 'True',
+                    'Connection': 'keep-alive'
+                }
+                
+                session.headers.update(request_headers)
                 
                 if proxy:
                     logging.info(f"Trying with proxy: {proxy}")
@@ -353,44 +384,59 @@ class InstagramAPI:
                 # İsteği gönder
                 response = session.post(
                     url,
-                    data=post_data,
+                    data=form_data,
                     proxies=proxies,
                     timeout=30 if not proxy else 15
                 )
                 
-                logging.info(f"Response status: {response.status_code}")
-                logging.info(f"Response headers: {dict(response.headers)}")
-                logging.info(f"Response content: {response.text[:500]}")
+                logging.info(f"Request URL: {url}")
+                logging.info(f"Request Headers: {json.dumps(dict(session.headers), indent=2)}")
+                logging.info(f"Request Data: {json.dumps(form_data, indent=2) if form_data else None}")
+                logging.info(f"Response Status: {response.status_code}")
+                logging.info(f"Response Headers: {json.dumps(dict(response.headers), indent=2)}")
+                logging.info(f"Response Content: {response.text[:1000]}")
                 
                 if response.status_code == 200:
                     return response.json()
                 elif response.status_code == 400:
-                    error_response = response.json()
-                    error_msg = error_response.get('message', 'Unknown error')
-                    logging.error(f"Bad request error: {error_msg}")
-                    if 'challenge' in error_response:
-                        logging.error("Challenge required")
-                    raise Exception(f"Bad request: {error_msg}")
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get('message', 'Unknown error')
+                        logging.error(f"Bad request error: {error_msg}")
+                        if retry_count < max_retries - 1:
+                            retry_count += 1
+                            time.sleep(retry_delay)
+                            continue
+                        raise Exception(f"Bad request: {error_msg}")
+                    except json.JSONDecodeError:
+                        logging.error(f"Invalid JSON in error response: {response.text}")
+                        raise Exception("Invalid error response from server")
                 elif response.status_code == 429:
                     wait_time = int(response.headers.get('Retry-After', 60))
                     logging.warning(f"Rate limited. Waiting {wait_time} seconds...")
                     time.sleep(wait_time)
                     continue
+                else:
+                    if retry_count < max_retries - 1:
+                        retry_count += 1
+                        time.sleep(retry_delay)
+                        continue
+                    raise Exception(f"Unexpected status code: {response.status_code}")
                 
-            except json.JSONDecodeError as e:
-                logging.error(f"JSON decode error: {str(e)}")
             except Exception as e:
                 logging.error(f"Request error: {str(e)}")
-            
-            if proxy:
-                self.proxy_manager.remove_proxy(proxy)
-            
-            retry_count += 1
-            time.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 60)
+                if proxy:
+                    self.proxy_manager.remove_proxy(proxy)
+                
+                retry_count += 1
+                if retry_count < max_retries:
+                    retry_delay = min(retry_delay * 2, 60)
+                    logging.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
+                raise
         
-        raise Exception(f"Failed to send request to {endpoint} after {max_retries} attempts")
-
+    raise Exception(f"Failed to send request to {endpoint} after {max_retries} attempts")
     def create_account(self):
         try:
             # Email oluştur
@@ -405,21 +451,31 @@ class InstagramAPI:
 
             # Account creation data
             signup_data = {
-                'allow_contacts_sync': 'true',
-                'sn_result': 'GOOGLE_PLAY_UNAVAILABLE',
-                'username': username,
-                'first_name': first_name,
-                'adid': self.advertising_id,
-                'device_id': self.device_id,
+                
                 'email': email,
+                'username': username,
                 'password': password,
-                'login_attempt_count': '0',
-                'phone_id': self.phone_id,
-                'guid': self.uuid,
+                'first_name': first_name,
+                'client_id': self.device_id,
+                'seamless_login_enabled': '1',
+                'gdpr_s': '[0,2,0,null]',
+                'tos_version': 'row',
                 'force_sign_up_code': '',
                 'waterfall_id': self.waterfall_id,
-                'qs_stamp': '',
                 'has_sms_consent': 'true',
+                'sn_result': 'GOOGLE_PLAY_UNAVAILABLE',
+                'try_num': '1',
+                'family_device_id': self.generate_uuid(),
+                'device_telemetry_id': self.generate_uuid(),
+                'default_scope': '',
+                'city_name': 'Istanbul',
+                'timezone_offset': '10800',
+                'is_secondary_account_creation': 'false',
+                'is_secondary_account_creation_fb': 'false',
+                'regist_source': '',
+                'suggested_username': '',
+                'validation_type': ''
+
             }
 
             # Hesap oluşturma isteği
