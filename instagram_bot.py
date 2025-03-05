@@ -186,29 +186,56 @@ class ProxyManager:
         self.update_interval = 180
         self.min_working_proxies = 5
         
-        # Güvenilir ve ücretsiz proxy listesi
+        # Yeni ve güncel proxy listesi
         self.base_proxies = [
-            'http://51.159.115.233:3128',
-            'http://163.172.31.44:80',
-            'http://51.158.154.73:3128',
-            'http://195.154.255.118:3128',
-            'http://51.158.68.133:8811',
-            'http://51.158.172.165:8811',
-            'http://163.172.157.142:3128',
+            # SOCKS5 Proxies
+            'socks5://157.245.72.33:1080',
+            'socks5://198.58.123.8:1080',
+            'socks5://46.101.163.117:1080',
+            'socks5://167.71.205.1:1080',
+            'socks5://139.59.57.40:1080',
+            
+            # HTTP/HTTPS Proxies
+            'http://20.111.54.16:80',
+            'http://20.206.106.192:80',
             'http://51.15.242.202:3128',
-            'http://51.15.242.202:8080',
-            'http://51.158.172.165:8761',
-            'http://149.202.181.48:5566',
-            'http://51.158.172.165:8089',
-            'http://51.158.98.121:8811',
-            'http://163.172.189.32:8811',
-            'http://178.32.129.31:3128',
-            'http://151.80.196.163:8811',
-            'http://151.80.196.163:8118',
-            'http://163.172.157.142:8089',
-            'http://51.158.68.68:8761',
-            'http://51.158.106.54:8811'
+            'http://172.104.117.89:80',
+            'http://103.152.112.162:80',
+            'http://82.102.11.74:443',
+            'http://51.159.115.233:3128',
+            'http://213.33.2.50:8080',
+            'http://165.22.36.164:8888',
+            'http://51.158.154.73:3128'
         ]
+        
+        # Proxy API endpoints
+        self.proxy_apis = [
+            'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=elite',
+            'https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt',
+            'https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt',
+            'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt',
+            'https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt'
+        ]
+
+    def fetch_proxies_from_apis(self):
+        """Fetch fresh proxies from APIs"""
+        new_proxies = set()
+        
+        for api_url in self.proxy_apis:
+            try:
+                response = requests.get(api_url, timeout=10)
+                if response.status_code == 200:
+                    proxies = response.text.strip().split('\n')
+                    for proxy in proxies:
+                        proxy = proxy.strip()
+                        if ':' in proxy:
+                            if not proxy.startswith(('http://', 'https://', 'socks5://')):
+                                proxy = f'http://{proxy}'
+                            new_proxies.add(proxy)
+            except:
+                continue
+                
+        return list(new_proxies)
 
     def update_proxies(self):
         """Update working proxy list"""
@@ -218,13 +245,23 @@ class ProxyManager:
 
             self.last_update = time.time()
             self.working_proxies = []
-
-            # Test base proxies
-            for proxy in self.base_proxies:
-                if self.test_proxy(proxy):
-                    self.working_proxies.append(proxy)
-                    if len(self.working_proxies) >= 10:  # En az 10 çalışan proxy bul
-                        break
+            
+            # Combine base proxies with fetched proxies
+            all_proxies = self.base_proxies.copy()
+            all_proxies.extend(self.fetch_proxies_from_apis())
+            
+            # Test proxies in parallel
+            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                future_to_proxy = {executor.submit(self.test_proxy, proxy): proxy for proxy in all_proxies}
+                for future in concurrent.futures.as_completed(future_to_proxy):
+                    proxy = future_to_proxy[future]
+                    try:
+                        if future.result():
+                            self.working_proxies.append(proxy)
+                            if len(self.working_proxies) >= 15:  # Get at least 15 working proxies
+                                break
+                    except:
+                        continue
 
             if self.working_proxies:
                 logging.info(f"Updated proxy list. Working proxies: {len(self.working_proxies)}")
@@ -245,20 +282,29 @@ class ProxyManager:
                 'Connection': 'keep-alive'
             })
 
+            proxies = {
+                'http': proxy,
+                'https': proxy
+            }
+
             # Test URLs
             test_urls = [
                 'https://www.instagram.com/',
-                'https://i.instagram.com/api/v1/si/fetch_headers/'
+                'https://i.instagram.com/api/v1/si/fetch_headers/',
+                'http://ip-api.com/json'  # IP check service
             ]
 
             for url in test_urls:
                 try:
+                    start_time = time.time()
                     response = session.get(
                         url,
-                        proxies={'http': proxy, 'https': proxy},
+                        proxies=proxies,
                         timeout=5
                     )
-                    if response.status_code < 400:
+                    response_time = time.time() - start_time
+                    
+                    if response.status_code < 400 and response_time < 3:
                         return True
                 except:
                     continue
@@ -274,10 +320,15 @@ class ProxyManager:
             self.update_proxies()
         
         if not self.working_proxies:
-            return None
+            # Tekrar deneme
+            time.sleep(2)
+            self.update_proxies()
+            
+            if not self.working_proxies:
+                return None
         
-        # Rastgele proxy seç
-        return random.choice(self.working_proxies)
+        # En iyi performans gösteren proxy'lerden birini rastgele seç
+        return random.choice(self.working_proxies[:5])
 
     def remove_proxy(self, proxy):
         """Remove failed proxy"""
@@ -287,7 +338,6 @@ class ProxyManager:
         
         if len(self.working_proxies) < self.min_working_proxies:
             self.update_proxies()
-    def get_random_proxy(self):
         """Get a random working proxy"""
         if len(self.working_proxies) < self.min_working_proxies:
             self.update_proxies()
@@ -566,78 +616,50 @@ class InstagramAPI:
         except Exception as e:
             logging.error(f"Error saving account details: {str(e)}")
             raise
-
 def main():
-    """Main execution function with improved retry logic and error handling"""
     logging.info("Starting Instagram Account Creator...")
     
-    max_attempts = 3
-    attempt = 0
-    wait_time_base = 10
-    
-    while attempt < max_attempts:
-        try:
-            attempt += 1
-            logging.info(f"Attempt {attempt} of {max_attempts}")
+    try:
+        proxy_manager = ProxyManager()
+        # İlk başta proxy'leri güncelle
+        proxy_manager.update_proxies()
+        
+        if not proxy_manager.working_proxies:
+            logging.error("Could not find any working proxies. Please check your internet connection or try again later.")
+            return
+        
+        api = InstagramAPI()
+        max_attempts = 3
+        current_attempt = 0
+        
+        while current_attempt < max_attempts:
+            logging.info(f"Attempt {current_attempt + 1} of {max_attempts}")
             
-            # Instagram API instance oluştur
-            api = InstagramAPI()
-            
-            # Hesap oluşturma işlemini başlat
-            success = api.create_account()
-            
-            if success:
-                logging.info("Account creation and customization completed successfully")
+            if api.create_account():
+                logging.info("Account creation successful!")
                 break
             else:
-                if attempt < max_attempts:
-                    wait_time = wait_time_base * (2 ** (attempt - 1))  # Exponential backoff
+                current_attempt += 1
+                if current_attempt < max_attempts:
+                    wait_time = 30
                     logging.info(f"Retrying in {wait_time} seconds...")
                     time.sleep(wait_time)
-                else:
-                    logging.error("Maximum attempts reached. Failed to create account")
+                    # Proxy'leri yenile
+                    proxy_manager.update_proxies()
         
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Network error in attempt {attempt}: {str(e)}")
-            if attempt < max_attempts:
-                wait_time = wait_time_base * (2 ** (attempt - 1))
-                logging.info(f"Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-                
-        except json.JSONDecodeError as e:
-            logging.error(f"JSON parsing error in attempt {attempt}: {str(e)}")
-            if attempt < max_attempts:
-                wait_time = wait_time_base * (2 ** (attempt - 1))
-                logging.info(f"Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-                
-        except Exception as e:
-            logging.error(f"Unexpected error in attempt {attempt}: {str(e)}")
-            if attempt < max_attempts:
-                wait_time = wait_time_base * (2 ** (attempt - 1))
-                logging.info(f"Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-            else:
-                logging.error("Maximum attempts reached. Terminating program")
-                break
-    
-    logging.info("Program terminated")
+    except KeyboardInterrupt:
+        logging.info("Program terminated by user")
+    except Exception as e:
+        logging.error(f"Unexpected error: {str(e)}")
+    finally:
+        logging.info("Program terminated")
 
 if __name__ == "__main__":
-    try:
-        # Set process title if possible
-        try:
-            import setproctitle
-            setproctitle.setproctitle('instagram_bot')
-        except ImportError:
-            pass
-        
-        # Create logs directory if it doesn't exist
-        if not os.path.exists('logs'):
-            os.makedirs('logs')
-        
-        # Start the main process
-        main()
+    # SSL uyarılarını kapat
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+    
+    main()
         
     except KeyboardInterrupt:
         logging.info("Program terminated by user")
