@@ -254,7 +254,7 @@ class InstagramAPI:
             'version_code': '314665256'
         }
 
-        # Headers
+        # Headers - Buradaki syntax hatasını düzelttik
         self.headers = {
             'User-Agent': f"Instagram {self.device_settings['app_version']} Android ({self.device_settings['android_version']}/{self.device_settings['android_release']}; {self.device_settings['dpi']}dpi; {self.device_settings['resolution']}; {self.device_settings['manufacturer']}; {self.device_settings['device']}; {self.device_settings['model']}; {self.device_settings['cpu']}; tr_TR; {self.device_settings['version_code']})",
             'Accept': '*/*',
@@ -270,6 +270,79 @@ class InstagramAPI:
         }
         
         self.session.headers.update(self.headers)
+
+        # Biyografi şablonları
+        self.bio_templates = [
+            "🌟 {} | Hayatın tadını çıkar ✨",
+            "💫 {} | Pozitif enerji 🌈",
+            "🌺 {} | Kendini sev 💝",
+            "✨ {} | Hayat güzel 🌟",
+            "🎯 {} | Hedeflerine odaklan 💪",
+            "🌈 {} | Her an yeni bir başlangıç 🎊",
+            "💫 {} | Yaşamak güzel 🌸",
+            "🍀 {} | Şansını kendin yarat ⭐",
+            "🎨 {} | Hayatı renklendir 🎭",
+            "🌙 {} | Yeni ufuklara 🌅"
+        ]
+    def generate_random_bio(self):
+        """Generate a random biography"""
+        bio_templates = [
+            "🌟 {} | Hayatın tadını çıkar ✨",
+            "💫 {} | Pozitif enerji 🌈",
+            "🌺 {} | Kendini sev 💝",
+            "✨ {} | Hayat güzel 🌟",
+            "🎯 {} | Hedeflerine odaklan 💪",
+            "🌈 {} | Her an yeni bir başlangıç 🎊",
+            "💫 {} | Yaşamak güzel 🌸",
+            "🍀 {} | Şansını kendin yarat ⭐",
+            "🎨 {} | Hayatı renklendir 🎭",
+            "🌙 {} | Yeni ufuklara 🌅"
+        ]
+        
+        
+    def update_profile(self, biography):
+        """Update profile with given biography"""
+        try:
+            bio_data = {
+                'raw_text': biography,
+                '_uuid': self.uuid,
+                '_uid': self.device_id
+            }
+            
+            response = self.send_request('accounts/set_biography/', bio_data)
+            if response and response.get('status') == 'ok':
+                logging.info("Biography updated successfully")
+                return True
+            return False
+        except Exception as e:
+            logging.error(f"Error updating biography: {str(e)}")
+            return False        
+        template = random.choice(bio_templates)
+        words = [self.fake.word() for _ in range(2)]
+        return template.format(" ".join(words))
+    def generate_random_bio(self):
+        """Generate a random biography"""
+        template = random.choice(self.bio_templates)
+        words = [self.fake.word() for _ in range(2)]
+        return template.format(" ".join(words))
+
+    def update_profile(self, biography):
+        """Update profile with given biography"""
+        try:
+            bio_data = {
+                'raw_text': biography,
+                '_uuid': self.uuid,
+                '_uid': self.device_id
+            }
+            
+            response = self.send_request('accounts/set_biography/', bio_data)
+            if response and response.get('status') == 'ok':
+                logging.info("Biography updated successfully")
+                return True
+            return False
+        except Exception as e:
+            logging.error(f"Error updating biography: {str(e)}")
+            return False
 
     def generate_device_id(self):
         """Generate a random device ID"""
@@ -315,37 +388,33 @@ class InstagramAPI:
             try:
                 if data:
                     # Temel veriyi hazırla
-                    device_data = {
+                    base_data = {
                         'device_id': self.device_id,
-                        '_uuid': self.uuid,
+                        '_uuid': str(uuid.uuid4()),
                         '_uid': self.device_id,
                         'guid': self.uuid,
                         'phone_id': self.phone_id,
                         '_csrftoken': 'missing',
-                        'device_timestamp': str(int(time.time() * 1000))
+                        'device_timezone_offset': '10800',
+                        'jazoest': '22234',
+                        'is_secondary_account_creation': 'false',
+                        'bloks_versioning_id': '8b95f85def54afd63f99b1a7565ef906601af3bb686df54af2610fbc740f942b'
                     }
-                    data.update(device_data)
+                    data.update(base_data)
                     
-                    # JSON string oluştur
-                    json_data = json.dumps(data)
-                    
-                    # İmza oluştur
+                    # JSON string oluştur ve imzala
+                    json_data = json.dumps(data, separators=(',', ':'))  # Compact JSON
                     signature = self.generate_signature(json_data)
                     
-                    # Form verisi hazırla
-                    form_data = {
+                    # POST verisi olarak gönder
+                    post_data = {
                         'signed_body': f'{signature}.{json_data}',
                         'ig_sig_key_version': self.sig_key_version
                     }
                 else:
-                    form_data = None
+                    post_data = None
     
-                # Session oluştur
-                session = requests.Session()
-                session.verify = False
-                
-                # Güncellenmiş headers
-                current_time = int(time.time())
+                # Headers güncelle
                 request_headers = {
                     'User-Agent': f"Instagram {self.device_settings['app_version']} Android ({self.device_settings['android_version']}/{self.device_settings['android_release']}; {self.device_settings['dpi']}dpi; {self.device_settings['resolution']}; {self.device_settings['manufacturer']}; {self.device_settings['device']}; {self.device_settings['model']}; {self.device_settings['cpu']}; tr_TR; {self.device_settings['version_code']})",
                     'Accept-Language': 'tr-TR',
@@ -356,23 +425,15 @@ class InstagramAPI:
                     'X-IG-App-ID': '936619743392459',
                     'X-IG-Device-ID': self.device_id,
                     'X-IG-Android-ID': self.android_id,
-                    'IG-U-DS-USER-ID': '0',
-                    'IG-U-RUR': '',
-                    'IG-INTENDED-USER-ID': '0',
-                    'X-MID': '',
-                    'X-Pigeon-Session-Id': self.generate_uuid(),
-                    'X-Pigeon-Rawclienttime': str(current_time),
-                    'X-IG-Connection-Speed': '-1kbps',
-                    'X-IG-Bandwidth-Speed-KBPS': '-1.000',
-                    'X-IG-Bandwidth-TotalBytes-B': '0',
-                    'X-IG-Bandwidth-TotalTime-MS': '0',
-                    'X-FB-HTTP-Engine': 'Liger',
-                    'X-FB-Client-IP': 'True',
-                    'X-FB-Server-Cluster': 'True',
-                    'Connection': 'keep-alive'
+                    'Host': 'i.instagram.com',
+                    'Connection': 'keep-alive',
+                    'Cookie': 'ig_cb=1'  # Added cookie
                 }
                 
+                # Session oluştur
+                session = requests.Session()
                 session.headers.update(request_headers)
+                session.verify = False
                 
                 if proxy:
                     logging.info(f"Trying with proxy: {proxy}")
@@ -384,44 +445,48 @@ class InstagramAPI:
                 # İsteği gönder
                 response = session.post(
                     url,
-                    data=form_data,
+                    data=post_data,
                     proxies=proxies,
                     timeout=30 if not proxy else 15
                 )
                 
+                # Log the request details
                 logging.info(f"Request URL: {url}")
                 logging.info(f"Request Headers: {json.dumps(dict(session.headers), indent=2)}")
-                logging.info(f"Request Data: {json.dumps(form_data, indent=2) if form_data else None}")
-                logging.info(f"Response Status: {response.status_code}")
-                logging.info(f"Response Headers: {json.dumps(dict(response.headers), indent=2)}")
-                logging.info(f"Response Content: {response.text[:1000]}")
+                logging.info(f"Request Data: {json.dumps(post_data, indent=2)}")
                 
-                if response.status_code == 200:
-                    return response.json()
-                elif response.status_code == 400:
-                    try:
-                        error_data = response.json()
-                        error_msg = error_data.get('message', 'Unknown error')
+                # Try to parse response as JSON
+                try:
+                    response_json = response.json()
+                    logging.info(f"Response Status: {response.status_code}")
+                    logging.info(f"Response Content: {json.dumps(response_json, indent=2)}")
+                    
+                    if response.status_code == 200:
+                        return response_json
+                    elif response.status_code == 400:
+                        if 'challenge_required' in response_json:
+                            logging.error("Challenge required")
+                            raise Exception("Challenge required")
+                        error_msg = response_json.get('message', 'Unknown error')
                         logging.error(f"Bad request error: {error_msg}")
                         if retry_count < max_retries - 1:
                             retry_count += 1
                             time.sleep(retry_delay)
                             continue
                         raise Exception(f"Bad request: {error_msg}")
-                    except json.JSONDecodeError:
-                        logging.error(f"Invalid JSON in error response: {response.text}")
-                        raise Exception("Invalid error response from server")
-                elif response.status_code == 429:
-                    wait_time = int(response.headers.get('Retry-After', 60))
-                    logging.warning(f"Rate limited. Waiting {wait_time} seconds...")
-                    time.sleep(wait_time)
-                    continue
-                else:
+                    elif response.status_code == 429:
+                        wait_time = int(response.headers.get('Retry-After', 60))
+                        logging.warning(f"Rate limited. Waiting {wait_time} seconds...")
+                        time.sleep(wait_time)
+                        continue
+                    
+                except json.JSONDecodeError:
+                    logging.error(f"Invalid JSON response: {response.text}")
                     if retry_count < max_retries - 1:
                         retry_count += 1
                         time.sleep(retry_delay)
                         continue
-                    raise Exception(f"Unexpected status code: {response.status_code}")
+                    raise Exception("Invalid response format")
                 
             except Exception as e:
                 logging.error(f"Request error: {str(e)}")
@@ -436,7 +501,7 @@ class InstagramAPI:
                     continue
                 raise
         
-    raise Exception(f"Failed to send request to {endpoint} after {max_retries} attempts")
+        raise Exception(f"Failed to send request after {max_retries} attempts")
     def create_account(self):
         try:
             # Email oluştur
@@ -451,31 +516,30 @@ class InstagramAPI:
 
             # Account creation data
             signup_data = {
-                
-                'email': email,
                 'username': username,
                 'password': password,
+                'email': email,
                 'first_name': first_name,
+                'day': str(random.randint(1, 28)),
+                'month': str(random.randint(1, 12)),
+                'year': str(random.randint(1990, 2000)),
                 'client_id': self.device_id,
                 'seamless_login_enabled': '1',
                 'gdpr_s': '[0,2,0,null]',
                 'tos_version': 'row',
                 'force_sign_up_code': '',
-                'waterfall_id': self.waterfall_id,
-                'has_sms_consent': 'true',
                 'sn_result': 'GOOGLE_PLAY_UNAVAILABLE',
-                'try_num': '1',
-                'family_device_id': self.generate_uuid(),
-                'device_telemetry_id': self.generate_uuid(),
-                'default_scope': '',
-                'city_name': 'Istanbul',
+                'family_device_id': str(uuid.uuid4()),
                 'timezone_offset': '10800',
-                'is_secondary_account_creation': 'false',
-                'is_secondary_account_creation_fb': 'false',
-                'regist_source': '',
+                'timezone_name': 'Europe/Istanbul',
+                'has_sms_consent': 'true',
+                'locale': 'tr_TR',
+                'waterfall_id': self.waterfall_id,
+                'startup_country': 'TR',
+                'device_registration_android_id': self.android_id,
+                'network_type': 'WIFI',
                 'suggested_username': '',
-                'validation_type': ''
-
+                'one_tap_opt_in': 'true'
             }
 
             # Hesap oluşturma isteği
